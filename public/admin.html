@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Radio Stream Admin Dashboard. Manage live streaming URLs, check listener statistics, and manage platform users.">
+    <title>Dashboard - Radio Stream Management</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background" aria-hidden="true">
+        <div class="blob blob1"></div>
+        <div class="blob blob3"></div>
+    </div>
+
+    <div class="container" style="max-width: 600px;">
+        <main class="glass">
+            <header class="header" style="display:flex; justify-content:space-between; align-items:center;">
+                <h1>DASHBOARD</h1>
+                <button id="logoutBtn" class="btn btn-danger" style="width:auto; padding:8px 16px; margin:0;">Logout</button>
+            </header>
+
+            <nav class="tabs" aria-label="Dashboard Tabs">
+                <button class="tab active" data-target="streamTab" aria-selected="true">Stream Control</button>
+                <button class="tab" data-target="usersTab" id="usersTabBtn" style="display:none;" aria-selected="false">User Management</button>
+            </nav>
+            
+            <!-- Stream Control Tab -->
+            <section id="streamTab" class="tab-content active" aria-label="Stream Control">
+                <div style="margin-bottom: 20px;">
+                    <div class="badge" id="adminStatusBadge">OFFLINE</div>
+                    <span id="adminListeners" style="margin-left: 10px; color: var(--text-muted); font-size: 0.9rem;">Listeners: 0</span>
+                </div>
+                
+                <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 10px; word-break: break-all;">
+                    Current URL: <span id="currentUrl">None</span>
+                </div>
+
+                <div id="urlInputGroup" class="form-group">
+                    <label for="ytUrl">YouTube Video / Live Stream URL</label>
+                    <input type="url" id="ytUrl" placeholder="https://www.youtube.com/watch?v=..." required>
+                </div>
+                
+                <div style="display:flex; gap:10px;">
+                    <button id="startBtn" class="btn" style="flex:1;">START STREAM</button>
+                    <button id="stopBtn" class="btn btn-danger" style="flex:1; display:none;">STOP STREAM</button>
+                </div>
+                <div id="streamMsg" class="success-msg" role="alert"></div>
+            </section>
+
+            <!-- Users Tab (SuperAdmin Only) -->
+            <section id="usersTab" class="tab-content" aria-label="User Management">
+                <form id="addUserForm" style="display:flex; gap:10px; align-items:flex-end;">
+                    <div class="form-group" style="flex:1; margin-bottom:0;">
+                        <label for="newUsername">New Username</label>
+                        <input type="text" id="newUsername" required>
+                    </div>
+                    <div class="form-group" style="flex:1; margin-bottom:0;">
+                        <label for="newPassword">Password</label>
+                        <input type="password" id="newPassword" required>
+                    </div>
+                    <button type="submit" class="btn" style="width:auto; margin-bottom:0;">Add</button>
+                </form>
+                <div id="userMsg" class="success-msg" role="alert"></div>
+                
+                <table class="users-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersList">
+                        <!-- Users will be loaded here -->
+                    </tbody>
+                </table>
+            </section>
+
+            <nav style="margin-top:20px; font-size: 0.9rem; text-align:center;" aria-label="Footer navigation">
+                <a href="/" class="admin-link">Go to Player Page</a>
+            </nav>
+        </main>
+    </div>
+    
+    <script src="js/admin.js"></script>
+</body>
+</html>

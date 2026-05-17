@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Login to the Radio Stream admin panel to control streams, manage users, and update broadcast settings.">
+    <title>Admin Login - Radio Stream Management</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="background" aria-hidden="true">
+        <div class="blob blob1"></div>
+        <div class="blob blob2"></div>
+    </div>
+
+    <div class="container">
+        <main class="glass">
+            <header class="header">
+                <h1>ADMIN LOGIN</h1>
+            </header>
+            
+            <section>
+                <form id="loginForm">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" required autocomplete="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" required autocomplete="current-password">
+                    </div>
+                    
+                    <button type="submit" class="btn">LOGIN</button>
+                    <div id="errorMsg" class="error-msg" role="alert"></div>
+                </form>
+                <nav style="margin-top:20px; font-size: 0.9rem;" aria-label="Secondary navigation">
+                    <a href="/" class="admin-link">← Back to Player</a>
+                </nav>
+            </section>
+        </main>
+    </div>
+    
+    <script>
+        if (localStorage.getItem('token')) {
+            window.location.href = '/admin.html';
+        }
+
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errorMsg = document.getElementById('errorMsg');
+            
+            errorMsg.style.display = 'none';
+            
+            try {
+                const res = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await res.json();
+                if (data.success) {
+                    localStorage.setItem('token', data.token);
+                    localStorage.setItem('role', data.role);
+                    window.location.href = '/admin.html';
+                } else {
+                    errorMsg.textContent = data.message;
+                    errorMsg.style.display = 'block';
+                }
+            } catch (err) {
+                errorMsg.textContent = 'Network error';
+                errorMsg.style.display = 'block';
+            }
+        });
+    </script>
+</body>
+</html>
