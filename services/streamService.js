@@ -22,6 +22,7 @@ class StreamService extends EventEmitter {
         this.burstBuffer = [];
         this.currentBurstSize = 0;
         this.maxBurstSize = 64 * 1024; // 64KB memory cache for instant playback
+        this.streamSessionId = 0;
     }
 
     startStream(url) {
@@ -30,6 +31,7 @@ class StreamService extends EventEmitter {
         }
 
         this.stopStream(false);
+        this.streamSessionId++;
         this.currentUrl = url;
         this.shouldRetry = true;
         this._startWatchdog();
@@ -52,7 +54,8 @@ class StreamService extends EventEmitter {
     async _launchProcesses() {
         if (!this.currentUrl) return;
 
-        logger.info(`Starting stream extraction for URL: ${this.currentUrl}`);
+        const sessionId = this.streamSessionId;
+        logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
         
         let directUrl;
         try {
@@ -66,13 +69,17 @@ class StreamService extends EventEmitter {
                 socketTimeout: 15
             });
         } catch (err) {
+            if (sessionId !== this.streamSessionId) return;
             logger.warn(`yt-dlp error fetching URL: ${err.message}`);
             this._handleProcessClose();
             return;
         }
 
-        // In case stopStream was called while we were awaiting the URL
-        if (!this.shouldRetry) return;
+        // In case stopStream or startStream was called while we were awaiting the URL
+        if (sessionId !== this.streamSessionId || !this.shouldRetry) {
+            logger.info('Aborting process launch: Stream session changed.');
+            return;
+        }
 
         logger.info('Successfully extracted direct stream URL.');
 
@@ -159,6 +166,7 @@ class StreamService extends EventEmitter {
 
     stopStream(clearUrl = true) {
         logger.info('Stopping stream manually.');
+        this.streamSessionId++;
         this.shouldRetry = false;
         clearTimeout(this.retryTimeout);
         clearInterval(this.watchdogInterval);

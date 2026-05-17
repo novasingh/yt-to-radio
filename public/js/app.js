@@ -6,6 +6,7 @@ const loadingIcon = document.querySelector('.loading-icon');
 const visualizer = document.querySelector('.visualizer');
 const statusBadge = document.getElementById('statusBadge');
 const listenersCount = document.getElementById('listeners');
+const reconnectStatus = document.getElementById('reconnectStatus');
 
 let isPlaying = false;
 let isIntentionallyStopped = true;
@@ -51,13 +52,14 @@ function startPlayback() {
     audioPlayer.play().catch(err => {
         console.error('Playback failed (maybe 503 offline):', err);
         stopPlaybackUI();
-        // Retry logic handled by setInterval if stream comes back
+        showReconnecting();
     });
 }
 
 function stopPlayback() {
     isIntentionallyStopped = true;
     stopPlaybackUI();
+    hideReconnecting();
 }
 
 function stopPlaybackUI() {
@@ -70,10 +72,19 @@ function stopPlaybackUI() {
     visualizer.classList.remove('playing');
 }
 
+function showReconnecting() {
+    if (reconnectStatus) reconnectStatus.style.display = 'block';
+}
+
+function hideReconnecting() {
+    if (reconnectStatus) reconnectStatus.style.display = 'none';
+}
+
 // Auto-reconnect listeners
 audioPlayer.addEventListener('ended', () => {
     if (!isIntentionallyStopped) {
         console.log('Stream ended unexpectedly. Reconnecting...');
+        showReconnecting();
         setTimeout(startPlayback, 3000);
     }
 });
@@ -81,6 +92,7 @@ audioPlayer.addEventListener('ended', () => {
 audioPlayer.addEventListener('error', () => {
     if (!isIntentionallyStopped) {
         console.log('Stream error. Reconnecting...');
+        showReconnecting();
         setTimeout(startPlayback, 3000);
     }
 });
@@ -101,6 +113,7 @@ audioPlayer.addEventListener('playing', () => {
     loadingIcon.style.display = 'none';
     pauseIcon.style.display = 'block';
     visualizer.classList.add('playing');
+    hideReconnecting();
 });
 
 playBtn.addEventListener('click', () => {

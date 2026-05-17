@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Radio Stream Admin Dashboard. Manage live streaming URLs, check listener statistics, and manage platform users.">
+    <meta name="description"
+        content="Radio Stream Admin Dashboard. Manage live streaming URLs, check listener statistics, and manage platform users.">
     <title>Dashboard - Radio Stream Management</title>
     <link rel="stylesheet" href="css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
 </head>
+
 <body>
     <div class="background" aria-hidden="true">
         <div class="blob blob1"></div>
@@ -18,24 +21,29 @@
         <main class="glass">
             <header class="header" style="display:flex; justify-content:space-between; align-items:center;">
                 <h1>DASHBOARD</h1>
-                <div style="display:flex; gap:10px;">
-                    <button id="changePwdBtn" class="btn" style="width:auto; padding:8px 16px; margin:0; display:none;">Change Password</button>
-                    <button id="logoutBtn" class="btn btn-danger" style="width:auto; padding:8px 16px; margin:0;">Logout</button>
+                <div style="display:flex; gap:10px; flex-shrink:0;">
+                    <button id="changePwdBtn" class="btn btn-secondary"
+                        style="width:auto; padding:8px 16px; margin:0; display:none; white-space:nowrap; font-size:0.85rem;">Change
+                        Password</button>
+                    <button id="logoutBtn" class="btn btn-danger"
+                        style="width:auto; padding:8px 16px; margin:0; white-space:nowrap; font-size:0.85rem;">Logout</button>
                 </div>
             </header>
 
             <nav class="tabs" aria-label="Dashboard Tabs">
                 <button class="tab active" data-target="streamTab" aria-selected="true">Stream Control</button>
-                <button class="tab" data-target="usersTab" id="usersTabBtn" style="display:none;" aria-selected="false">User Management</button>
+                <button class="tab" data-target="usersTab" id="usersTabBtn" style="display:none;"
+                    aria-selected="false">User Management</button>
             </nav>
-            
+
             <!-- Stream Control Tab -->
             <section id="streamTab" class="tab-content active" aria-label="Stream Control">
                 <div style="margin-bottom: 20px;">
                     <div class="badge" id="adminStatusBadge">OFFLINE</div>
-                    <span id="adminListeners" style="margin-left: 10px; color: var(--text-muted); font-size: 0.9rem;">Listeners: 0</span>
+                    <span id="adminListeners"
+                        style="margin-left: 10px; color: var(--text-muted); font-size: 0.9rem;">Listeners: 0</span>
                 </div>
-                
+
                 <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 10px; word-break: break-all;">
                     Current URL: <span id="currentUrl">None</span>
                 </div>
@@ -44,7 +52,7 @@
                     <label for="ytUrl">YouTube Video / Live Stream URL</label>
                     <input type="url" id="ytUrl" placeholder="https://www.youtube.com/watch?v=..." required>
                 </div>
-                
+
                 <div style="display:flex; gap:10px;">
                     <button id="startBtn" class="btn" style="flex:1;">START STREAM</button>
                     <button id="stopBtn" class="btn btn-danger" style="flex:1; display:none;">STOP STREAM</button>
@@ -66,7 +74,7 @@
                     <button type="submit" class="btn" style="width:auto; margin-bottom:0;">Add</button>
                 </form>
                 <div id="userMsg" class="success-msg" role="alert"></div>
-                
+
                 <table class="users-table">
                     <thead>
                         <tr>
@@ -86,9 +94,10 @@
                 <a href="/" class="admin-link">Go to Player Page</a>
             </nav>
         </main>
-        
-        <dialog id="pwdDialog" class="glass" style="border:none; border-radius:15px; padding:20px; max-width:400px; width:90%; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); margin:0;">
-            <h2 style="margin-top:0; color:var(--text-color);">Change Password</h2>
+
+        <dialog id="pwdDialog" class="glass"
+            style="border:none; border-radius:15px; padding:20px; max-width:400px; width:90%; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); margin:0;">
+            <h2 style="margin-top:0; color:#ffffff;">Change Password</h2>
             <form id="pwdForm">
                 <div class="form-group">
                     <label for="newPwd">New Password</label>
@@ -106,16 +115,20 @@
             </form>
         </dialog>
 
-        <dialog id="deleteDialog" class="glass" style="border:none; border-radius:15px; padding:20px; max-width:400px; width:90%; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); margin:0; text-align:center;">
+        <dialog id="deleteDialog" class="glass"
+            style="border:none; border-radius:15px; padding:20px; max-width:400px; width:90%; position:fixed; top:50%; left:50%; transform:translate(-50%, -50%); margin:0; text-align:center;">
             <h2 style="margin-top:0; color:var(--danger);">Delete User</h2>
-            <p style="margin-bottom:20px; color:var(--text-main);">Are you sure you want to delete this user? This action cannot be undone.</p>
+            <p style="margin-bottom:20px; color:var(--text-main);">Are you sure you want to delete this user? This
+                action cannot be undone.</p>
             <div style="display:flex; gap:10px;">
-                <button type="button" id="cancelDeleteBtn" class="btn" style="flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2);">Cancel</button>
+                <button type="button" id="cancelDeleteBtn" class="btn"
+                    style="flex:1; background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2);">Cancel</button>
                 <button type="button" id="confirmDeleteBtn" class="btn btn-danger" style="flex:1;">Delete</button>
             </div>
         </dialog>
     </div>
-    
+
     <script src="js/admin.js"></script>
 </body>
+
 </html>

@@ -7,11 +7,17 @@ const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 
 function login(username, password) {
     return new Promise((resolve, reject) => {
-        db.get(`SELECT * FROM users WHERE username = ?`, [username], (err, user) => {
+        db.get(`SELECT * FROM users WHERE username = ?`, [username], async (err, user) => {
             if (err) return reject(err);
-            if (!user) return resolve({ success: false, message: 'Invalid credentials' });
+            
+            if (!user) {
+                // Timing attack prevention: Run a dummy bcrypt comparison
+                await bcrypt.compare(password, '$2a$10$BvZg9TSEFNFfXUI/ghsNQuHm0tI1W3gK.9zGXRXKgVFDlVnFC3ZWu');
+                return resolve({ success: false, message: 'Invalid credentials' });
+            }
 
-            const isValid = bcrypt.compareSync(password, user.password);
+            // DoS Prevention: Asynchronous bcrypt compare
+            const isValid = await bcrypt.compare(password, user.password);
             if (!isValid) return resolve({ success: false, message: 'Invalid credentials' });
 
             const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });

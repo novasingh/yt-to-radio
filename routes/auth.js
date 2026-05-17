@@ -1,10 +1,20 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { login, getAllUsers, createUser, deleteUser, authMiddleware, changePassword } = require('../services/authService');
 
 const router = express.Router();
 
+// Brute Force Protection: Limit login attempts
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 5, // Limit each IP to 5 requests per windowMs
+    message: { success: false, message: 'Too many login attempts, please try again after 15 minutes' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
         return res.status(400).json({ success: false, message: 'Username and password required' });

@@ -46,11 +46,39 @@
             window.location.href = '/admin.html';
         }
 
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const submitBtn = document.querySelector('.btn');
+        const errorMsg = document.getElementById('errorMsg');
+
+        function validateForm() {
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value.trim();
+            
+            const isValidUsername = username.length > 0;
+            const isValidPassword = password.length > 0;
+            
+            if (isValidUsername && isValidPassword) {
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+                submitBtn.style.cursor = 'pointer';
+            } else {
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.5';
+                submitBtn.style.cursor = 'not-allowed';
+            }
+        }
+
+        usernameInput.addEventListener('input', validateForm);
+        passwordInput.addEventListener('input', validateForm);
+
+        // Initial validation run
+        validateForm();
+
         document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const errorMsg = document.getElementById('errorMsg');
+            const username = usernameInput.value;
+            const password = passwordInput.value;
             
             errorMsg.style.display = 'none';
             
