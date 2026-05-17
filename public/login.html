@@ -1,13 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Login to the Radio Stream admin panel to control streams, manage users, and update broadcast settings.">
+    <meta name="description"
+        content="Login to the Radio Stream admin panel to control streams, manage users, and update broadcast settings.">
     <title>Admin Login - Radio Stream Management</title>
     <link rel="stylesheet" href="css/style.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
 </head>
+
 <body>
     <div class="background" aria-hidden="true">
         <div class="blob blob1"></div>
@@ -17,9 +20,9 @@
     <div class="container">
         <main class="glass">
             <header class="header">
-                <h1>ADMIN LOGIN</h1>
+                <h1>RADIO LOGIN</h1>
             </header>
-            
+
             <section>
                 <form id="loginForm">
                     <div class="form-group">
@@ -30,7 +33,7 @@
                         <label for="password">Password</label>
                         <input type="password" id="password" required autocomplete="current-password">
                     </div>
-                    
+
                     <button type="submit" class="btn">LOGIN</button>
                     <div id="errorMsg" class="error-msg" role="alert"></div>
                 </form>
@@ -40,7 +43,7 @@
             </section>
         </main>
     </div>
-    
+
     <script>
         if (localStorage.getItem('token')) {
             window.location.href = '/admin.html';
@@ -54,10 +57,10 @@
         function validateForm() {
             const username = usernameInput.value.trim();
             const password = passwordInput.value.trim();
-            
+
             const isValidUsername = username.length > 0;
             const isValidPassword = password.length > 0;
-            
+
             if (isValidUsername && isValidPassword) {
                 submitBtn.disabled = false;
                 submitBtn.style.opacity = '1';
@@ -79,16 +82,16 @@
             e.preventDefault();
             const username = usernameInput.value;
             const password = passwordInput.value;
-            
+
             errorMsg.style.display = 'none';
-            
+
             try {
                 const res = await fetch('/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username, password })
                 });
-                
+
                 const data = await res.json();
                 if (data.success) {
                     localStorage.setItem('token', data.token);
@@ -105,4 +108,5 @@
         });
     </script>
 </body>
+
 </html>
