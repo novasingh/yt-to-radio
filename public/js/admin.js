@@ -24,6 +24,50 @@ if (role === 'superadmin') {
     usersTabBtn.style.display = 'block';
 }
 
+const changePwdBtn = document.getElementById('changePwdBtn');
+const pwdDialog = document.getElementById('pwdDialog');
+const pwdForm = document.getElementById('pwdForm');
+const cancelPwdBtn = document.getElementById('cancelPwdBtn');
+const pwdError = document.getElementById('pwdError');
+
+if (role !== 'superadmin') {
+    changePwdBtn.style.display = 'block';
+}
+
+changePwdBtn.addEventListener('click', () => {
+    pwdDialog.showModal();
+});
+
+cancelPwdBtn.addEventListener('click', () => {
+    pwdDialog.close();
+    pwdForm.reset();
+    pwdError.style.display = 'none';
+});
+
+pwdForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const newPwd = document.getElementById('newPwd').value;
+    const confirmPwd = document.getElementById('confirmPwd').value;
+    
+    if (newPwd !== confirmPwd) {
+        showMsg(pwdError, 'Passwords do not match', true);
+        return;
+    }
+    
+    try {
+        const data = await apiCall('/auth/password', 'PUT', { newPassword: newPwd });
+        if (data.success) {
+            pwdDialog.close();
+            pwdForm.reset();
+            alert('Password updated successfully!');
+        } else {
+            showMsg(pwdError, data.message, true);
+        }
+    } catch (err) {
+        showMsg(pwdError, 'Network error', true);
+    }
+});
+
 tabs.forEach(tab => {
     tab.addEventListener('click', () => {
         tabs.forEach(t => t.classList.remove('active'));
@@ -203,8 +247,25 @@ addUserForm.addEventListener('submit', async (e) => {
     }
 });
 
-window.deleteUser = async function(id) {
-    if (!confirm('Are you sure you want to delete this user?')) return;
+const deleteDialog = document.getElementById('deleteDialog');
+const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
+const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
+let userToDelete = null;
+
+window.deleteUser = function(id) {
+    userToDelete = id;
+    deleteDialog.showModal();
+};
+
+cancelDeleteBtn.addEventListener('click', () => {
+    deleteDialog.close();
+    userToDelete = null;
+});
+
+confirmDeleteBtn.addEventListener('click', async () => {
+    if (!userToDelete) return;
+    const id = userToDelete;
+    deleteDialog.close();
     
     try {
         const data = await apiCall(`/auth/users/${id}`, 'DELETE');
@@ -216,8 +277,10 @@ window.deleteUser = async function(id) {
         }
     } catch (err) {
         showMsg(userMsg, 'Error deleting user', true);
+    } finally {
+        userToDelete = null;
     }
-};
+});
 
 // Auto update status
 updateStreamStatus();

@@ -1,5 +1,5 @@
 const express = require('express');
-const { login, getAllUsers, createUser, deleteUser, authMiddleware } = require('../services/authService');
+const { login, getAllUsers, createUser, deleteUser, authMiddleware, changePassword } = require('../services/authService');
 
 const router = express.Router();
 
@@ -55,6 +55,29 @@ router.post('/users', authMiddleware, async (req, res) => {
 router.delete('/users/:id', authMiddleware, async (req, res) => {
     try {
         const result = await deleteUser(req.params.id);
+        if (result.success) {
+            res.json(result);
+        } else {
+            res.status(400).json(result);
+        }
+    } catch (err) {
+        res.status(500).json({ success: false, message: 'Internal server error' });
+    }
+});
+
+// Change password (logged in users only, not superadmin)
+router.put('/password', authMiddleware, async (req, res) => {
+    const { newPassword } = req.body;
+    if (!newPassword) {
+        return res.status(400).json({ success: false, message: 'New password required' });
+    }
+    
+    if (req.user.role === 'superadmin') {
+        return res.status(403).json({ success: false, message: 'Superadmin password cannot be changed via UI' });
+    }
+    
+    try {
+        const result = await changePassword(req.user.id, newPassword);
         if (result.success) {
             res.json(result);
         } else {

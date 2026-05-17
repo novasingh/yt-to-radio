@@ -2,6 +2,7 @@ const audioPlayer = document.getElementById('audioPlayer');
 const playBtn = document.getElementById('playBtn');
 const playIcon = document.querySelector('.play-icon');
 const pauseIcon = document.querySelector('.pause-icon');
+const loadingIcon = document.querySelector('.loading-icon');
 const visualizer = document.querySelector('.visualizer');
 const statusBadge = document.getElementById('statusBadge');
 const listenersCount = document.getElementById('listeners');
@@ -41,12 +42,13 @@ function startPlayback() {
     isIntentionallyStopped = false;
     audioPlayer.src = `/live?t=${Date.now()}`;
     
-    audioPlayer.play().then(() => {
-        isPlaying = true;
-        playIcon.style.display = 'none';
-        pauseIcon.style.display = 'block';
-        visualizer.classList.add('playing');
-    }).catch(err => {
+    // Show loading spinner immediately
+    playIcon.style.display = 'none';
+    pauseIcon.style.display = 'none';
+    loadingIcon.style.display = 'block';
+    visualizer.classList.remove('playing');
+    
+    audioPlayer.play().catch(err => {
         console.error('Playback failed (maybe 503 offline):', err);
         stopPlaybackUI();
         // Retry logic handled by setInterval if stream comes back
@@ -64,6 +66,7 @@ function stopPlaybackUI() {
     isPlaying = false;
     playIcon.style.display = 'block';
     pauseIcon.style.display = 'none';
+    loadingIcon.style.display = 'none';
     visualizer.classList.remove('playing');
 }
 
@@ -80,6 +83,24 @@ audioPlayer.addEventListener('error', () => {
         console.log('Stream error. Reconnecting...');
         setTimeout(startPlayback, 3000);
     }
+});
+
+// HTML5 Audio Buffering states
+audioPlayer.addEventListener('waiting', () => {
+    if (!isIntentionallyStopped) {
+        playIcon.style.display = 'none';
+        pauseIcon.style.display = 'none';
+        loadingIcon.style.display = 'block';
+        visualizer.classList.remove('playing');
+    }
+});
+
+audioPlayer.addEventListener('playing', () => {
+    isPlaying = true;
+    playIcon.style.display = 'none';
+    loadingIcon.style.display = 'none';
+    pauseIcon.style.display = 'block';
+    visualizer.classList.add('playing');
 });
 
 playBtn.addEventListener('click', () => {

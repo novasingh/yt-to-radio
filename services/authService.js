@@ -22,9 +22,20 @@ function login(username, password) {
 
 function getAllUsers() {
     return new Promise((resolve, reject) => {
-        db.all(`SELECT id, username, role FROM users`, [], (err, rows) => {
+        db.all(`SELECT id, username, role FROM users WHERE role != 'superadmin'`, [], (err, rows) => {
             if (err) return reject(err);
             resolve(rows);
+        });
+    });
+}
+
+function changePassword(userId, newPassword) {
+    return new Promise((resolve, reject) => {
+        const salt = bcrypt.genSaltSync(10);
+        const hash = bcrypt.hashSync(newPassword, salt);
+        db.run(`UPDATE users SET password = ? WHERE id = ?`, [hash, userId], function(err) {
+            if (err) return reject(err);
+            resolve({ success: true });
         });
     });
 }
@@ -82,5 +93,6 @@ module.exports = {
     getAllUsers,
     createUser,
     deleteUser,
-    authMiddleware
+    authMiddleware,
+    changePassword
 };

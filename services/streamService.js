@@ -19,6 +19,9 @@ class StreamService extends EventEmitter {
         this.watchdogInterval = null;
         this.lastChunkTime = Date.now();
         this.shouldRetry = true;
+        this.burstBuffer = [];
+        this.currentBurstSize = 0;
+        this.maxBurstSize = 64 * 1024; // 64KB memory cache for instant playback
     }
 
     startStream(url) {
@@ -99,6 +102,15 @@ class StreamService extends EventEmitter {
 
         this.ffmpegStream.on('data', (chunk) => {
             this.lastChunkTime = Date.now();
+            
+            // Manage burst buffer
+            this.burstBuffer.push(chunk);
+            this.currentBurstSize += chunk.length;
+            while (this.currentBurstSize > this.maxBurstSize) {
+                const removed = this.burstBuffer.shift();
+                this.currentBurstSize -= removed.length;
+            }
+
             if (!this.isOnline) {
                 this.isOnline = true;
                 logger.info('Stream is now online and broadcasting via Node modules.');
@@ -141,6 +153,8 @@ class StreamService extends EventEmitter {
             } catch (e) {}
             this.ffmpegStream = null;
         }
+        this.burstBuffer = [];
+        this.currentBurstSize = 0;
     }
 
     stopStream(clearUrl = true) {
@@ -165,6 +179,16 @@ class StreamService extends EventEmitter {
     addListener(res) {
         this.listeners.add(res);
         logger.info(`Listener added. Total listeners: ${this.listeners.size}`);
+        
+        // Burst on connect: send the last 64KB immediately so browser buffers instantly
+        if (this.burstBuffer.length > 0) {
+            const burstData = Buffer.concat(this.burstBuffer);
+            try {
+                res.write(burstData);
+            } catch (e) {
+                this.removeListener(res);
+            }
+        }
         
         // Ensure to remove listener if they disconnect
         res.on('close', () => {
