@@ -68,11 +68,28 @@ class StreamService extends EventEmitter {
             socketTimeout: 15
         };
 
-        // Detect and apply cookies.txt file if uploaded to bypass YouTube bot verification on VPS
+        // Manage portable configuration dynamically to bypass wrapper/shell parsing bugs
         const cookiesPath = path.join(__dirname, '../cookies.txt');
+        const confPath = path.join(__dirname, '../yt-dlp.conf');
+        
         if (fs.existsSync(cookiesPath)) {
-            ytDlpOptions.cookies = cookiesPath;
-            logger.info('Detected cookies.txt file in project root. Applying cookies to yt-dlp.');
+            // Write a portable yt-dlp configuration file in the current working directory
+            // This is natively read by yt-dlp, bypassing any wrapper/node argument-splitting bugs!
+            try {
+                fs.writeFileSync(confPath, '--cookies cookies.txt\n--js-runtimes node\n', 'utf8');
+                logger.info('Detected cookies.txt in project root. Configured yt-dlp.conf (with Node JS runtime support) successfully.');
+            } catch (confErr) {
+                logger.warn(`Failed to write yt-dlp.conf: ${confErr.message}`);
+            }
+        } else {
+            // Clean up config if cookies are removed
+            if (fs.existsSync(confPath)) {
+                try {
+                    fs.unlinkSync(confPath);
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+            }
         }
         
         let directUrl;
