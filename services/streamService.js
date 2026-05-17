@@ -2,6 +2,8 @@ const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const youtubedl = require('youtube-dl-exec');
+const fs = require('fs');
+const path = require('path');
 const logger = require('../utils/logger');
 
 // Tell fluent-ffmpeg to use the locally installed static binary
@@ -57,17 +59,27 @@ class StreamService extends EventEmitter {
         const sessionId = this.streamSessionId;
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
         
+        // Define standard yt-dlp extraction options
+        const ytDlpOptions = {
+            f: 'bestaudio/best',
+            getUrl: true,
+            noPlaylist: true,
+            geoBypass: true,
+            socketTimeout: 15
+        };
+
+        // Detect and apply cookies.txt file if uploaded to bypass YouTube bot verification on VPS
+        const cookiesPath = path.join(__dirname, '../cookies.txt');
+        if (fs.existsSync(cookiesPath)) {
+            ytDlpOptions.cookies = cookiesPath;
+            logger.info('Detected cookies.txt file in project root. Applying cookies to yt-dlp.');
+        }
+        
         let directUrl;
         try {
             // Get the direct media URL instead of piping stdout.
             // Using stability flags: --no-playlist, --geo-bypass, and timeout
-            directUrl = await youtubedl(this.currentUrl, {
-                f: 'bestaudio/best',
-                getUrl: true,
-                noPlaylist: true,
-                geoBypass: true,
-                socketTimeout: 15
-            });
+            directUrl = await youtubedl(this.currentUrl, ytDlpOptions);
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
             logger.warn(`yt-dlp error fetching URL: ${err.message}`);
