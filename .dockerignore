@@ -1,0 +1,19 @@
+# Ignore standard dependencies and build artifacts
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Ignore local sqlite and cookies files to prevent baking them into the image
+database.sqlite
+cookies.txt
+yt-dlp.conf
+app.log
+data/
+
+# Ignore development files and configs
+.env
+.git/
+.gitignore
+scratch/
+testing/
+*.md

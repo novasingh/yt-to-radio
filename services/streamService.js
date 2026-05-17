@@ -70,7 +70,7 @@ class StreamService extends EventEmitter {
         };
 
         // Detect and apply cookies.txt file if uploaded to bypass YouTube bot verification on VPS
-        const cookiesPath = path.join(__dirname, '../cookies.txt');
+        const cookiesPath = process.env.COOKIES_PATH || path.join(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesPath)) {
             ytDlpOptions.cookies = cookiesPath;
             ytDlpOptions.jsRuntimes = 'node'; // Natively solve YouTube signature ciphers via Node.js

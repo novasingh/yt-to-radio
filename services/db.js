@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const logger = require('../utils/logger');
 require('dotenv').config();
 
-const dbPath = path.join(__dirname, '../database.sqlite');
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../database.sqlite');
 const dbExists = fs.existsSync(dbPath);
 
 const db = new sqlite3.Database(dbPath, (err) => {
