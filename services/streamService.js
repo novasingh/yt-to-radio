@@ -1,10 +1,69 @@
 const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const play = require('play-dl');
+const { Innertube, Platform } = require('youtubei.js');
+const { Readable } = require('stream');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
+
+// Provide the mandatory JavaScript interpreter for youtubei.js to decipher signatures natively
+Platform.shim.eval = async (data) => {
+    return new Function(data.output)();
+};
+
+// Netscape HTTP Cookie File Parser
+function parseNetscapeCookies(filePath) {
+    if (!fs.existsSync(filePath)) return null;
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split('\n');
+    const cookiePairs = [];
+    
+    for (const line of lines) {
+        if (line.trim().startsWith('#') || line.trim() === '') continue;
+        
+        const parts = line.split('\t');
+        if (parts.length >= 7) {
+            const name = parts[5].trim();
+            const value = parts[6].trim();
+            if (name && value) {
+                cookiePairs.push(`${name}=${value}`);
+            }
+        }
+    }
+    
+    return cookiePairs.join('; ');
+}
+
+// Lazy-loaded Innertube client factory
+let youtubeClient = null;
+async function getYoutubeClient() {
+    if (!youtubeClient) {
+        const cookiesPath = path.join(__dirname, '../cookies.txt');
+        let cookieString = '';
+        if (fs.existsSync(cookiesPath)) {
+            try {
+                cookieString = parseNetscapeCookies(cookiesPath);
+                logger.info('Detected cookies.txt in project root. Parsed Netscape cookies successfully for youtubei.js.');
+            } catch (e) {
+                logger.warn(`Failed to parse cookies.txt: ${e.message}`);
+            }
+        }
+        
+        youtubeClient = await Innertube.create({
+            cookie: cookieString || undefined
+        });
+        logger.info('Innertube YouTube client created successfully.');
+    }
+    return youtubeClient;
+}
+
+// YouTube Video ID extractor regex helper
+function getYouTubeVideoId(url) {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+}
 
 // Tell fluent-ffmpeg to use the locally installed static binary
 try {
@@ -63,31 +122,28 @@ class StreamService extends EventEmitter {
         const sessionId = this.streamSessionId;
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
         
-        // Detect and apply cookies if present in project root for play-dl
-        const cookiesPath = path.join(__dirname, '../cookies.txt');
-        if (fs.existsSync(cookiesPath)) {
-            try {
-                const cookies = fs.readFileSync(cookiesPath, 'utf8');
-                play.setToken({
-                    youtube: {
-                        cookie: cookies
-                    }
-                });
-                logger.info('Detected cookies.txt file in project root. Loaded cookies successfully into play-dl.');
-            } catch (cookieErr) {
-                logger.warn(`Failed to set play-dl cookie token: ${cookieErr.message}`);
-            }
+        // Extract the video ID from the URL
+        const videoId = getYouTubeVideoId(this.currentUrl);
+        if (!videoId) {
+            logger.error(`Invalid YouTube URL format: ${this.currentUrl}`);
+            this._handleProcessClose();
+            return;
         }
-        
-        let source;
+
+        let webStream;
         try {
-            logger.info('Fetching stream source via play-dl (100% Pure JavaScript)...');
-            source = await play.stream(this.currentUrl, {
-                quality: 1 // best audio quality
+            logger.info('Fetching stream source via youtubei.js (100% Pure JavaScript)...');
+            const client = await getYoutubeClient();
+            const videoInfo = await client.getInfo(videoId);
+
+            // Fetch the best audio stream format natively
+            webStream = await videoInfo.download({
+                type: 'audio',
+                quality: 'best'
             });
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
-            logger.warn(`play-dl error fetching URL: ${err.message}`);
+            logger.warn(`youtubei.js error fetching URL: ${err.message}`);
             this._handleProcessClose();
             return;
         }
@@ -95,16 +151,19 @@ class StreamService extends EventEmitter {
         // In case stopStream or startStream was called while we were awaiting the URL
         if (sessionId !== this.streamSessionId || !this.shouldRetry) {
             logger.info('Aborting process launch: Stream session changed.');
-            if (source && source.stream) {
-                try { source.stream.destroy(); } catch (e) {}
+            if (webStream) {
+                try { webStream.cancel(); } catch (e) {}
             }
             return;
         }
 
-        logger.info('Successfully extracted direct play-dl audio stream.');
+        logger.info('Successfully extracted direct audio stream.');
 
-        // Create fluent-ffmpeg command reading from the play-dl readable stream
-        this.ffmpegCommand = ffmpeg(source.stream)
+        // Convert modern Web-standard ReadableStream to a standard Node.js Readable stream
+        const nodeStream = Readable.fromWeb(webStream);
+
+        // Create fluent-ffmpeg command reading from the Node.js readable stream
+        this.ffmpegCommand = ffmpeg(nodeStream)
             .audioCodec('libmp3lame')
             .audioBitrate('16k')
             .format('mp3')
