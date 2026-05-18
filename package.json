@@ -9,6 +9,7 @@
     "install:force": "npm install --force"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
