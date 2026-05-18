@@ -1,82 +1,10 @@
 const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const youtubedlModule = require('youtube-dl-exec');
+const play = require('play-dl');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
-
-// Resolve the yt-dlp binary path and automatically verify/apply execute permissions (chmod +x) on Linux
-let youtubedl = youtubedlModule;
-const customYtDlpPath = process.env.YT_DLP_PATH;
-
-if (customYtDlpPath) {
-    try {
-        youtubedl = youtubedlModule.create(customYtDlpPath);
-        logger.info(`Using custom yt-dlp binary path: ${customYtDlpPath}`);
-    } catch (createErr) {
-        logger.error(`Failed to load custom yt-dlp binary: ${createErr.message}`);
-    }
-} else if (process.platform !== 'win32') {
-    try {
-        const defaultYtDlpPath = path.join(__dirname, '../node_modules/youtube-dl-exec/bin/yt-dlp');
-        if (fs.existsSync(defaultYtDlpPath)) {
-            fs.chmodSync(defaultYtDlpPath, 0o755);
-            logger.info(`Successfully set execute permissions (0755) on internal yt-dlp binary at: ${defaultYtDlpPath}`);
-        }
-    } catch (chmodErr) {
-        logger.warn(`Failed to verify or apply execution permissions to internal yt-dlp binary: ${chmodErr.message}`);
-    }
-}
-
-// Prerequisite Python shim setter: Resolve Hostinger "env: python3: No such file or directory" issue programmatically
-function setupPythonShim() {
-    if (process.platform === 'win32') return;
-
-    logger.info('Verifying Python runtime environment on Hostinger VPS...');
-    let hasPython3 = false;
-    let hasPython = false;
-
-    try {
-        require('child_process').execSync('which python3', { stdio: 'ignore' });
-        hasPython3 = true;
-        logger.info('Python Check: python3 is already available natively on system PATH.');
-    } catch (e) {}
-
-    if (!hasPython3) {
-        try {
-            require('child_process').execSync('which python', { stdio: 'ignore' });
-            hasPython = true;
-            logger.info('Python Check: python3 is missing, but system fallback python is available.');
-        } catch (e) {}
-
-        if (hasPython) {
-            const shimDir = path.join(__dirname, '../bin');
-            const shimPath = path.join(shimDir, 'python3');
-
-            try {
-                if (!fs.existsSync(shimDir)) {
-                    fs.mkdirSync(shimDir, { recursive: true });
-                }
-
-                // Write a shell wrapper that forwards all arguments to the system 'python' command
-                const shimContent = `#!/bin/sh\nexec python "$@"\n`;
-                fs.writeFileSync(shimPath, shimContent, 'utf8');
-                fs.chmodSync(shimPath, 0o755);
-
-                // Prepend our local bin shim directory to the process PATH variable
-                process.env.PATH = shimDir + ':' + process.env.PATH;
-                logger.info(`Hostinger Python Shim active: Prepend local wrapper '${shimDir}' to process PATH.`);
-            } catch (shimErr) {
-                logger.error(`Failed to create Hostinger Python wrapper shim: ${shimErr.message}`);
-            }
-        } else {
-            logger.warn('WARNING: Neither python3 nor python could be resolved in system PATH. Streaming extraction may fail.');
-        }
-    }
-}
-
-setupPythonShim();
 
 // Tell fluent-ffmpeg to use the locally installed static binary
 try {
@@ -135,32 +63,31 @@ class StreamService extends EventEmitter {
         const sessionId = this.streamSessionId;
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
         
-        // Define standard yt-dlp extraction options
-        const ytDlpOptions = {
-            f: 'bestaudio/best',
-            getUrl: true,
-            noPlaylist: true,
-            geoBypass: true,
-            socketTimeout: 15,
-            ignoreConfig: true, // IGNORE any broken/stray config files on the VPS that leak cookie contents!
-            jsRuntimes: 'node'  // Natively solve YouTube signature ciphers via Node.js unconditionally
-        };
-
-        // Detect and apply cookies.txt file if uploaded to bypass YouTube bot verification on VPS
+        // Detect and apply cookies if present in project root for play-dl
         const cookiesPath = path.join(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesPath)) {
-            ytDlpOptions.cookies = cookiesPath;
-            logger.info('Detected cookies.txt file in project root. Applying cookies with Node JS runtime support to yt-dlp.');
+            try {
+                const cookies = fs.readFileSync(cookiesPath, 'utf8');
+                play.setToken({
+                    youtube: {
+                        cookie: cookies
+                    }
+                });
+                logger.info('Detected cookies.txt file in project root. Loaded cookies successfully into play-dl.');
+            } catch (cookieErr) {
+                logger.warn(`Failed to set play-dl cookie token: ${cookieErr.message}`);
+            }
         }
         
-        let directUrl;
+        let source;
         try {
-            // Get the direct media URL instead of piping stdout.
-            // Using stability flags: --no-playlist, --geo-bypass, and timeout
-            directUrl = await youtubedl(this.currentUrl, ytDlpOptions);
+            logger.info('Fetching stream source via play-dl (100% Pure JavaScript)...');
+            source = await play.stream(this.currentUrl, {
+                quality: 1 // best audio quality
+            });
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
-            logger.warn(`yt-dlp error fetching URL: ${err.message}`);
+            logger.warn(`play-dl error fetching URL: ${err.message}`);
             this._handleProcessClose();
             return;
         }
@@ -168,16 +95,16 @@ class StreamService extends EventEmitter {
         // In case stopStream or startStream was called while we were awaiting the URL
         if (sessionId !== this.streamSessionId || !this.shouldRetry) {
             logger.info('Aborting process launch: Stream session changed.');
+            if (source && source.stream) {
+                try { source.stream.destroy(); } catch (e) {}
+            }
             return;
         }
 
-        logger.info('Successfully extracted direct stream URL.');
+        logger.info('Successfully extracted direct play-dl audio stream.');
 
-        // Create fluent-ffmpeg command reading from the direct URL
-        this.ffmpegCommand = ffmpeg(directUrl)
-            // -re tells ffmpeg to read input at native frame rate. 
-            // This is CRITICAL so non-live videos don't finish transcoding in 2 seconds and stop the stream.
-            .inputOptions('-re') 
+        // Create fluent-ffmpeg command reading from the play-dl readable stream
+        this.ffmpegCommand = ffmpeg(source.stream)
             .audioCodec('libmp3lame')
             .audioBitrate('16k')
             .format('mp3')
