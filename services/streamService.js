@@ -3,6 +3,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
 const path = require('path');
+const youtubedl = require('youtube-dl-exec');
 const logger = require('../utils/logger');
 
 // Setup execute-permitted local temp directory (kept for compatibility)
@@ -39,29 +40,6 @@ function getCookiesPath() {
         }
     }
     return null;
-}
-
-// Convert Netscape cookies.txt file content into standard Cookie header string
-function getCookieHeaderString(cookiesPath) {
-    if (!cookiesPath || !fs.existsSync(cookiesPath)) return '';
-    try {
-        const lines = fs.readFileSync(cookiesPath, 'utf8').split('\n');
-        const cookies = [];
-        for (const line of lines) {
-            const cleanLine = line.trim();
-            if (!cleanLine || cleanLine.startsWith('#')) continue;
-            const parts = cleanLine.split('\t');
-            if (parts.length >= 7) {
-                const name = parts[5];
-                const value = parts[6];
-                cookies.push(`${name}=${value}`);
-            }
-        }
-        return cookies.join('; ');
-    } catch (err) {
-        logger.error(`Error parsing cookies.txt: ${err.message}`);
-        return '';
-    }
 }
 
 // Helper to extract the 11-character video ID from standard YouTube links
@@ -130,113 +108,35 @@ class StreamService extends EventEmitter {
         }
 
         try {
-            logger.info('Initializing Innertube YouTube.js client...');
-            const { Innertube } = require('youtubei.js');
+            logger.info('Querying direct URL using youtube-dl-exec (yt-dlp)...');
             
             const cookiesPath = getCookiesPath();
-            const config = {};
-            let hasCookies = false;
-            
+            const options = {
+                getUrl: true,
+                format: 'bestaudio/best'
+            };
+
             if (cookiesPath) {
-                const cookieString = getCookieHeaderString(cookiesPath);
-                if (cookieString) {
-                    config.cookie = cookieString;
-                    hasCookies = true;
-                    logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied session cookies successfully to YouTube.js.`);
-                }
-            } else {
-                logger.warn('WARNING: cookies.txt was NOT found on this server! YouTube.js requests will be unauthenticated.');
+                options.cookies = cookiesPath;
+                logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied session cookies to youtube-dl-exec.`);
             }
 
-            let client = await Innertube.create(config);
+            // Extract the direct stream URL using the latest yt-dlp binary managed automatically by youtube-dl-exec
+            const directUrl = await youtubedl(this.currentUrl, options);
 
             if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
-            const clientsToTry = ['TV_EMBEDDED', 'TV', 'ANDROID', 'WEB'];
-            let playerResponse = null;
-            let lastErr = null;
+            logger.info(`SUCCESS: Extracted direct stream URL: ${directUrl}`);
 
-            // Try 1: Attempt extraction with loaded session cookies
-            for (const clientName of clientsToTry) {
-                try {
-                    logger.info(`Executing client.getBasicInfo() with ${clientName} client context for video ID: ${videoId}...`);
-                    playerResponse = await client.getBasicInfo(videoId, clientName);
-                    if (playerResponse && playerResponse.streaming_data) {
-                        logger.info(`SUCCESS: Extracted streaming data successfully using ${clientName} client context!`);
-                        break;
-                    } else {
-                        logger.warn(`WARNING: No streaming data returned using ${clientName} client context. Trying next client...`);
-                    }
-                } catch (err) {
-                    lastErr = err;
-                    logger.warn(`WARNING: Failed extraction using ${clientName} client context: ${err.message}. Trying next client...`);
-                }
-            }
+            // Detect live stream based on index.m3u8 presence or manifest flags
+            const isLive = directUrl.includes('index.m3u8') || directUrl.includes('manifest');
+            logger.info(`Spawning fluent-ffmpeg transcoder (isLive: ${isLive})...`);
 
-            // Try 2: If we had cookies and everything failed, the cookies are likely expired or corrupt! Fall back to anonymous client context.
-            if ((!playerResponse || !playerResponse.streaming_data) && hasCookies) {
-                logger.warn('WARNING: All authenticated client attempts failed. Your cookies.txt might be expired or corrupt! Retrying with clean ANONYMOUS context...');
-                client = await Innertube.create(); // Create clean anonymous client with 0 cookies
-                
-                for (const clientName of clientsToTry) {
-                    try {
-                        logger.info(`Executing ANONYMOUS client.getBasicInfo() with ${clientName} client context for video ID: ${videoId}...`);
-                        playerResponse = await client.getBasicInfo(videoId, clientName);
-                        if (playerResponse && playerResponse.streaming_data) {
-                            logger.info(`SUCCESS: Extracted streaming data successfully using ANONYMOUS ${clientName} client context!`);
-                            break;
-                        } else {
-                            logger.warn(`WARNING: No streaming data returned using ANONYMOUS ${clientName} client context. Trying next client...`);
-                        }
-                    } catch (err) {
-                        lastErr = err;
-                        logger.warn(`WARNING: Failed ANONYMOUS extraction using ${clientName} client context: ${err.message}. Trying next client...`);
-                    }
-                }
-            }
-
-            if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
-
-            if (!playerResponse || !playerResponse.streaming_data) {
-                throw new Error(lastErr ? lastErr.message : 'All client contexts failed to extract streaming data.');
-            }
-
-            const streamingData = playerResponse.streaming_data;
-
-            // Live stream detection
-            const isLive = !streamingData.dash_manifest_url && !streamingData.hls_manifest_url ? false : true;
-            
-            let directUrl;
-            if (isLive && streamingData.hls_manifest_url) {
-                logger.info('Live stream detected! Using direct HLS master manifest URL for infinite transcoding.');
-                directUrl = streamingData.hls_manifest_url;
-            } else {
-                const formats = [...(streamingData.formats || []), ...(streamingData.adaptive_formats || [])];
-                // Select itag 140 (128kbps AAC audio in MP4 container, highly compatible and perfect quality/bandwidth ratio)
-                let audioFormat = formats.find(f => f.itag === 140);
-                if (!audioFormat) {
-                    audioFormat = formats.find(f => f.mime_type.startsWith('audio/'));
-                }
-
-                if (!audioFormat) {
-                    throw new Error('No compatible audio format found for this video.');
-                }
-
-                logger.info(`Static video detected! Chose audio format itag ${audioFormat.itag} (${audioFormat.mime_type}). Deciphering direct play URL...`);
-                
-                // AWAIT the decipher call to resolve to direct play URL
-                directUrl = await audioFormat.decipher(client.session.actions.sig_decipherer);
-            }
-
-            if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
-
-            logger.info(`Successfully prepared direct audio stream source (isLive: ${isLive})! Spawning FFmpeg transcoder...`);
-            
             this._startFfmpegStream(directUrl, sessionId, isLive);
 
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
-            logger.error(`YouTube.js streaming error: ${err.message}`);
+            logger.error(`youtube-dl-exec / yt-dlp streaming error: ${err.message}`);
             this._handleProcessClose();
         }
     }
