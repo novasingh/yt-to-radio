@@ -1,0 +1,20 @@
+# ==========================================
+# Hostinger Node.js Application Routing Configuration
+# Optimized to delegate all requests safely to Phusion Passenger Node.js runtime.
+# ==========================================
+
+<IfModule mod_passenger.c>
+    PassengerEnabled on
+    PassengerAppType node
+    PassengerStartupFile server.js
+</IfModule>
+
+# Prevent directory listing for privacy & security
+Options -Indexes
+
+# Exclude static files from Passenger matching to let Apache handle them directly (extremely fast static assets loading)
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^(.*)$ server.js [L,QSA]
+</IfModule>

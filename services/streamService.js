@@ -1,25 +1,16 @@
 const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegStatic = require('ffmpeg-static');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const youtubedl = require('youtube-dl-exec');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
 
-// Smart FFmpeg Path Selector:
-// 1. If process.env.FFMPEG_PATH is explicitly set, use it.
-// 2. On Windows host (local development), use the static fallback binary.
-// 3. On Linux/production/Docker, prioritize the system-installed native FFmpeg (100% stable/optimized),
-//    falling back to ffmpeg-static only if a native binary is not found.
-if (process.env.FFMPEG_PATH) {
-    ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
-} else if (process.platform === 'win32') {
-    ffmpeg.setFfmpegPath(ffmpegStatic);
-} else {
-    const hasSystemFfmpeg = fs.existsSync('/usr/bin/ffmpeg') || fs.existsSync('/usr/local/bin/ffmpeg');
-    if (!hasSystemFfmpeg) {
-        ffmpeg.setFfmpegPath(ffmpegStatic);
-    }
+// Tell fluent-ffmpeg to use the locally installed static binary
+try {
+    ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+} catch (ffmpegErr) {
+    logger.error(`Failed to set local FFmpeg path: ${ffmpegErr.message}`);
 }
 
 class StreamService extends EventEmitter {
@@ -71,7 +62,7 @@ class StreamService extends EventEmitter {
 
         const sessionId = this.streamSessionId;
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
-        
+
         // Define standard yt-dlp extraction options
         const ytDlpOptions = {
             f: 'bestaudio/best',
@@ -87,9 +78,9 @@ class StreamService extends EventEmitter {
         const cookiesPath = process.env.COOKIES_PATH || path.join(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesPath)) {
             ytDlpOptions.cookies = cookiesPath;
-            logger.info('Detected cookies.txt file in project root. Applying cookies to yt-dlp.');
+            logger.info('Detected cookies.txt file in project root. Applying cookies with Node JS runtime support to yt-dlp.');
         }
-        
+
         let directUrl;
         try {
             // Get the direct media URL instead of piping stdout.
@@ -114,7 +105,7 @@ class StreamService extends EventEmitter {
         this.ffmpegCommand = ffmpeg(directUrl)
             // -re tells ffmpeg to read input at native frame rate. 
             // This is CRITICAL so non-live videos don't finish transcoding in 2 seconds and stop the stream.
-            .inputOptions('-re') 
+            .inputOptions('-re')
             .audioCodec('libmp3lame')
             .audioBitrate('16k')
             .format('mp3')
@@ -136,7 +127,7 @@ class StreamService extends EventEmitter {
 
         this.ffmpegStream.on('data', (chunk) => {
             this.lastChunkTime = Date.now();
-            
+
             // Manage burst buffer
             this.burstBuffer.push(chunk);
             this.currentBurstSize += chunk.length;
@@ -162,7 +153,7 @@ class StreamService extends EventEmitter {
 
     _handleProcessClose() {
         if (!this.shouldRetry) return; // Already stopped or handling manual stop
-        
+
         this.isOnline = false;
         this.emit('status-change');
         this._cleanupProcesses();
@@ -178,13 +169,13 @@ class StreamService extends EventEmitter {
         if (this.ffmpegCommand) {
             try {
                 this.ffmpegCommand.kill('SIGKILL');
-            } catch (e) {}
+            } catch (e) { }
             this.ffmpegCommand = null;
         }
         if (this.ffmpegStream) {
             try {
                 this.ffmpegStream.destroy();
-            } catch (e) {}
+            } catch (e) { }
             this.ffmpegStream = null;
         }
         this.burstBuffer = [];
@@ -203,7 +194,7 @@ class StreamService extends EventEmitter {
         this._cleanupProcesses();
         this.isOnline = false;
         this.emit('status-change');
-        
+
         // End all active listener responses
         for (const res of this.listeners) {
             res.end();
@@ -214,7 +205,7 @@ class StreamService extends EventEmitter {
     addListener(res) {
         this.listeners.add(res);
         logger.info(`Listener added. Total listeners: ${this.listeners.size}`);
-        
+
         // Burst on connect: send the last 64KB immediately so browser buffers instantly
         if (this.burstBuffer.length > 0) {
             const burstData = Buffer.concat(this.burstBuffer);
@@ -224,7 +215,7 @@ class StreamService extends EventEmitter {
                 this.removeListener(res);
             }
         }
-        
+
         // Ensure to remove listener if they disconnect
         res.on('close', () => {
             this.removeListener(res);
