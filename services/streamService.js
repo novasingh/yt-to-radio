@@ -70,14 +70,14 @@ class StreamService extends EventEmitter {
             noPlaylist: true,
             geoBypass: true,
             socketTimeout: 15,
-            ignoreConfig: true // IGNORE any broken/stray config files on the VPS that leak cookie contents!
+            ignoreConfig: true, // IGNORE any broken/stray config files on the VPS that leak cookie contents!
+            jsRuntimes: 'node'  // Natively solve YouTube signature ciphers via Node.js unconditionally
         };
 
         // Detect and apply cookies.txt file if uploaded to bypass YouTube bot verification on VPS
         const cookiesPath = path.join(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesPath)) {
             ytDlpOptions.cookies = cookiesPath;
-            ytDlpOptions.jsRuntimes = 'node'; // Natively solve YouTube signature ciphers via Node.js
             logger.info('Detected cookies.txt file in project root. Applying cookies with Node JS runtime support to yt-dlp.');
         }
         
