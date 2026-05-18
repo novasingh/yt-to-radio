@@ -15,6 +15,9 @@ const logger = require('./utils/logger');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Enable 'trust proxy' to allow express-rate-limit to read the actual client IP behind Hostinger/Apache reverse proxies
+app.set('trust proxy', 1);
+
 // ==========================================
 // 1. ROBUST UNCAUGHT EXCEPTION & REJECTION HANDLERS
 // Prevent Hostinger OOM/Engine issues from bringing down the entire Node.js server
