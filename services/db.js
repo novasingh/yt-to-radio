@@ -7,7 +7,7 @@ require('dotenv').config();
 let db;
 let dbExists = false;
 
-// Compatibility Adapter to map sqlite3 API to node:sqlite DatabaseSync
+// Compatibility Adapter to map sqlite3 API  node:sqlite DatabaseSync
 class NodeSqliteAdapter {
     constructor(dbPath) {
         this.nativeDb = new (require('node:sqlite').DatabaseSync)(dbPath);
@@ -72,7 +72,7 @@ try {
     logger.info('Attempting to load built-in node:sqlite module...');
     db = new NodeSqliteAdapter(dbPath);
     logger.info('Connected to the SQLite database via built-in node:sqlite module successfully!');
-    
+
     if (!dbExists) {
         try {
             fs.chmodSync(dbPath, 0o666);
@@ -84,7 +84,7 @@ try {
     initDb();
 } catch (nodeSqliteErr) {
     logger.warn(`node:sqlite not supported or failed: ${nodeSqliteErr.message}. Falling back to sqlite3 package...`);
-    
+
     try {
         const sqlite3 = require('sqlite3').verbose();
         db = new sqlite3.Database(dbPath, (err) => {
@@ -95,14 +95,14 @@ try {
                 if (!dbExists) {
                     try {
                         fs.chmodSync(dbPath, 0o666);
-                    } catch (e) {}
+                    } catch (e) { }
                 }
                 initDb();
             }
         });
     } catch (sqlite3Err) {
         logger.error(`CRITICAL: sqlite3 native driver also failed: ${sqlite3Err.message}. Initializing safe mock DB...`);
-        
+
         db = {
             serialize: (cb) => { if (typeof cb === 'function') cb(); },
             run: (query, params, cb) => {
