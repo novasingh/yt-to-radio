@@ -150,15 +150,33 @@ class StreamService extends EventEmitter {
 
             if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
-            logger.info(`Executing client.getBasicInfo() with WEB client context for video ID: ${videoId}...`);
-            const playerResponse = await client.getBasicInfo(videoId, 'WEB');
-            
+            const clientsToTry = ['TV_EMBEDDED', 'TV', 'ANDROID', 'WEB'];
+            let playerResponse = null;
+            let lastErr = null;
+
+            for (const clientName of clientsToTry) {
+                try {
+                    logger.info(`Executing client.getBasicInfo() with ${clientName} client context for video ID: ${videoId}...`);
+                    playerResponse = await client.getBasicInfo(videoId, clientName);
+                    if (playerResponse && playerResponse.streaming_data) {
+                        logger.info(`SUCCESS: Extracted streaming data successfully using ${clientName} client context!`);
+                        break;
+                    } else {
+                        logger.warn(`WARNING: No streaming data returned using ${clientName} client context. Trying next client...`);
+                    }
+                } catch (err) {
+                    lastErr = err;
+                    logger.warn(`WARNING: Failed extraction using ${clientName} client context: ${err.message}. Trying next client...`);
+                }
+            }
+
             if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
-            const streamingData = playerResponse.streaming_data;
-            if (!streamingData) {
-                throw new Error('No streaming data found in player response.');
+            if (!playerResponse || !playerResponse.streaming_data) {
+                throw new Error(lastErr ? lastErr.message : 'All client contexts failed to extract streaming data.');
             }
+
+            const streamingData = playerResponse.streaming_data;
 
             // Live stream detection
             const isLive = !streamingData.dash_manifest_url && !streamingData.hls_manifest_url ? false : true;
