@@ -1,10 +1,33 @@
 const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const youtubedl = require('youtube-dl-exec');
+const youtubedlModule = require('youtube-dl-exec');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
+
+// Resolve the yt-dlp binary path and automatically verify/apply execute permissions (chmod +x) on Linux
+let youtubedl = youtubedlModule;
+const customYtDlpPath = process.env.YT_DLP_PATH;
+
+if (customYtDlpPath) {
+    try {
+        youtubedl = youtubedlModule.create(customYtDlpPath);
+        logger.info(`Using custom yt-dlp binary path: ${customYtDlpPath}`);
+    } catch (createErr) {
+        logger.error(`Failed to load custom yt-dlp binary: ${createErr.message}`);
+    }
+} else if (process.platform !== 'win32') {
+    try {
+        const defaultYtDlpPath = path.join(__dirname, '../node_modules/youtube-dl-exec/bin/yt-dlp');
+        if (fs.existsSync(defaultYtDlpPath)) {
+            fs.chmodSync(defaultYtDlpPath, 0o755);
+            logger.info(`Successfully set execute permissions (0755) on internal yt-dlp binary at: ${defaultYtDlpPath}`);
+        }
+    } catch (chmodErr) {
+        logger.warn(`Failed to verify or apply execution permissions to internal yt-dlp binary: ${chmodErr.message}`);
+    }
+}
 
 // Tell fluent-ffmpeg to use the locally installed static binary
 try {
