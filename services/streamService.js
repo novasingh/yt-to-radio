@@ -109,7 +109,7 @@ class StreamService extends EventEmitter {
 
         try {
             logger.info('Querying direct URL using pre-packaged youtube-dl-exec (yt-dlp) binary...');
-            
+
             const cookiesPath = getCookiesPath();
             const dlpPath = youtubedl.constants.YOUTUBE_DL_PATH;
 
@@ -177,7 +177,7 @@ class StreamService extends EventEmitter {
 
         // Create fluent-ffmpeg command reading from the direct URL
         const cmd = ffmpeg(directUrl);
-        
+
         // Pacing standard non-live video frames to match real-time audio playback
         if (!isLive) {
             cmd.inputOptions('-re');
@@ -205,7 +205,7 @@ class StreamService extends EventEmitter {
 
         this.ffmpegStream.on('data', (chunk) => {
             this.lastChunkTime = Date.now();
-            
+
             // Manage burst buffer
             this.burstBuffer.push(chunk);
             this.currentBurstSize += chunk.length;
@@ -232,7 +232,7 @@ class StreamService extends EventEmitter {
 
     _handleProcessClose() {
         if (!this.shouldRetry) return; // Already stopped or handling manual stop
-        
+
         this.isOnline = false;
         this.emit('status-change');
         this._cleanupProcesses();
@@ -248,13 +248,13 @@ class StreamService extends EventEmitter {
         if (this.ffmpegCommand) {
             try {
                 this.ffmpegCommand.kill('SIGKILL');
-            } catch (e) {}
+            } catch (e) { }
             this.ffmpegCommand = null;
         }
         if (this.ffmpegStream) {
             try {
                 this.ffmpegStream.destroy();
-            } catch (e) {}
+            } catch (e) { }
             this.ffmpegStream = null;
         }
         this.burstBuffer = [];
@@ -273,7 +273,7 @@ class StreamService extends EventEmitter {
         this._cleanupProcesses();
         this.isOnline = false;
         this.emit('status-change');
-        
+
         // End all active listener responses
         for (const res of this.listeners) {
             res.end();
@@ -284,10 +284,10 @@ class StreamService extends EventEmitter {
     addListener(res) {
         this.listeners.add(res);
         logger.info(`Listener added. Total listeners: ${this.listeners.size}`);
-        
+
         // Send correct content-type header for standard MP3
         res.setHeader('Content-Type', 'audio/mpeg');
-        
+
         // Burst on connect: send the last 128KB immediately so browser buffers instantly
         if (this.burstBuffer.length > 0) {
             const burstData = Buffer.concat(this.burstBuffer);
@@ -297,7 +297,7 @@ class StreamService extends EventEmitter {
                 this.removeListener(res);
             }
         }
-        
+
         // Ensure to remove listener if they disconnect
         res.on('close', () => {
             this.removeListener(res);
