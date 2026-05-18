@@ -1,13 +1,11 @@
 const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const youtubedlModule = require('youtube-dl-exec');
+const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
 const logger = require('../utils/logger');
 
-// Setup execute-permitted local temp directory to bypass Hostinger's `/tmp` noexec restriction
+// Setup execute-permitted local temp directory (kept for compatibility)
 const localTmpDir = path.join(__dirname, '../tmp');
 if (!fs.existsSync(localTmpDir)) {
     try {
@@ -19,102 +17,21 @@ if (!fs.existsSync(localTmpDir)) {
 process.env.TMPDIR = localTmpDir;
 process.env.TEMP = localTmpDir;
 process.env.TMP = localTmpDir;
-logger.info(`Locked execute-permitted local temp directory to bypass noexec: ${localTmpDir}`);
 
-// Helper to search and find the cookies.txt file across multiple locations
-function getCookiesPath() {
-    const paths = [
-        path.join(__dirname, '../cookies.txt'),
-        path.join(__dirname, 'cookies.txt'),
-        path.join(process.cwd(), 'cookies.txt')
-    ];
-    for (const p of paths) {
-        if (fs.existsSync(p)) {
-            return p;
-        }
-    }
-    return null;
-}
-
-// Lazy-loaded executable builder
-let youtubedl = null;
-
-async function getYoutubeDl() {
-    if (youtubedl) return youtubedl;
-
-    const customPath = process.env.YT_DLP_PATH;
-    if (customPath) {
-        logger.info(`Using custom YT_DLP_PATH: ${customPath}`);
-        youtubedl = youtubedlModule.create(customPath);
-        return youtubedl;
-    }
-
-    if (process.platform === 'win32') {
-        logger.info('Running on Windows: Utilizing youtube-dl-exec default executable.');
-        youtubedl = youtubedlModule;
-        return youtubedl;
-    }
-
-    // On Linux/Hostinger, check and run standalone compiled self-contained yt-dlp binary (needs 0% Python!)
-    const binDir = path.join(__dirname, '../bin');
-    const binaryPath = path.join(binDir, 'yt-dlp_linux');
-
-    if (fs.existsSync(binaryPath)) {
-        logger.info(`Standalone self-contained yt-dlp binary found at: ${binaryPath}`);
-        youtubedl = youtubedlModule.create(binaryPath);
-        return youtubedl;
-    }
-
-    logger.info('Hostinger Environment: Standalone self-contained Linux yt-dlp binary missing. Initiating automatic download...');
-    if (!fs.existsSync(binDir)) {
-        fs.mkdirSync(binDir, { recursive: true });
-    }
-
-    await new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(binaryPath);
-        
-        function download(url) {
-            https.get(url, (response) => {
-                if (response.statusCode === 302 || response.statusCode === 301) {
-                    download(response.headers.location);
-                    return;
-                }
-                
-                if (response.statusCode !== 200) {
-                    reject(new Error(`Failed to download binary: HTTP ${response.statusCode}`));
-                    return;
-                }
-
-                response.pipe(file);
-                
-                file.on('finish', () => {
-                    file.close();
-                    try {
-                        fs.chmodSync(binaryPath, 0o755);
-                        logger.info('Standalone Linux yt-dlp binary downloaded and permissions set to 0755 successfully!');
-                        resolve();
-                    } catch (chmodErr) {
-                        reject(new Error(`Failed to set permissions: ${chmodErr.message}`));
-                    }
-                });
-            }).on('error', (err) => {
-                fs.unlink(binaryPath, () => {});
-                reject(err);
-            });
-        }
-
-        download('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux');
-    });
-
-    youtubedl = youtubedlModule.create(binaryPath);
-    return youtubedl;
-}
-
-// Tell fluent-ffmpeg to use the locally installed static binary
+// Set static FFmpeg path natively and automatically (no manual install!)
 try {
-    ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+    ffmpeg.setFfmpegPath(ffmpegPath);
+    logger.info(`Locked static FFmpeg path successfully via ffmpeg-static: ${ffmpegPath}`);
 } catch (ffmpegErr) {
-    logger.error(`Failed to set local FFmpeg path: ${ffmpegErr.message}`);
+    logger.error(`Failed to set static FFmpeg path: ${ffmpegErr.message}`);
+}
+
+// Helper to extract the 11-character video ID from standard YouTube links
+function extractVideoId(url) {
+    if (!url) return null;
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
 }
 
 class StreamService extends EventEmitter {
@@ -131,7 +48,7 @@ class StreamService extends EventEmitter {
         this.shouldRetry = true;
         this.burstBuffer = [];
         this.currentBurstSize = 0;
-        this.maxBurstSize = 64 * 1024; // 64KB memory cache for instant playback
+        this.maxBurstSize = 128 * 1024; // 128KB memory cache for instant playback buffering
         this.streamSessionId = 0;
     }
 
@@ -153,8 +70,8 @@ class StreamService extends EventEmitter {
         this.watchdogInterval = setInterval(() => {
             if (this.isOnline && this.ffmpegCommand) {
                 const timeSinceLastChunk = Date.now() - this.lastChunkTime;
-                if (timeSinceLastChunk > 15000) {
-                    logger.error('Watchdog: No audio chunks received for 15s. Restarting stream.');
+                if (timeSinceLastChunk > 20000) {
+                    logger.error('Watchdog: No audio chunks received for 20s. Restarting stream.');
                     this._handleProcessClose();
                 }
             }
@@ -167,123 +84,91 @@ class StreamService extends EventEmitter {
         const sessionId = this.streamSessionId;
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
 
-        let ytdlSuccess = false;
-        
-        try {
-            logger.info('Attempting stream extraction via @distube/ytdl-core...');
-            const ytdl = require('@distube/ytdl-core');
-            
-            const cookiesPath = getCookiesPath();
-            const ytdlOptions = {
-                filter: 'audioonly',
-                quality: 'highestaudio'
-            };
-
-            if (cookiesPath) {
-                // Apply cookies as standard header if cookies.txt is present
-                const cookiesContent = fs.readFileSync(cookiesPath, 'utf8');
-                ytdlOptions.requestOptions = {
-                    headers: {
-                        Cookie: cookiesContent
-                    }
-                };
-                logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied to @distube/ytdl-core.`);
-            } else {
-                logger.warn('WARNING: cookies.txt was NOT found on this server! YouTube requests will be unauthenticated and may be rate-limited.');
-            }
-
-            const ytdlStream = ytdl(this.currentUrl, ytdlOptions);
-
-            ytdlStream.on('error', (ytdlErr) => {
-                if (ytdlSuccess) return;
-                logger.warn(`@distube/ytdl-core failed: ${ytdlErr.message}. Falling back seamlessly to standalone yt-dlp...`);
-                this._launchYtDlpProcesses(sessionId);
-            });
-
-            ytdlStream.once('readable', () => {
-                if (sessionId !== this.streamSessionId) {
-                    try { ytdlStream.destroy(); } catch (e) {}
-                    return;
-                }
-                
-                ytdlSuccess = true;
-                logger.info('Successfully extracted stream via @distube/ytdl-core!');
-                this._startFfmpegStream(ytdlStream, sessionId, false);
-            });
-
-        } catch (err) {
-            logger.warn(`Failed to initialize @distube/ytdl-core: ${err.message}. Falling back seamlessly to standalone yt-dlp...`);
-            if (sessionId === this.streamSessionId) {
-                this._launchYtDlpProcesses(sessionId);
-            }
-        }
-    }
-
-    async _launchYtDlpProcesses(sessionId) {
-        if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
-
-        let directUrl;
-        try {
-            // Lazy-load and build our standalone self-contained yt-dlp binary
-            const launcher = await getYoutubeDl();
-
-            // Set standard extraction options
-            const ytDlpOptions = {
-                f: 'bestaudio/best',
-                getUrl: true,
-                noPlaylist: true,
-                geoBypass: true,
-                socketTimeout: 15,
-                ignoreConfig: true
-            };
-
-            const cookiesPath = getCookiesPath();
-            if (cookiesPath) {
-                ytDlpOptions.cookies = cookiesPath;
-                logger.info(`Detected cookies.txt at: ${cookiesPath}. Applying cookies to standalone yt-dlp.`);
-            } else {
-                logger.warn('WARNING: cookies.txt was NOT found on this server! Standalone yt-dlp requests will be unauthenticated and may get 429 blocks.');
-            }
-
-            logger.info('Extracting direct media stream URL using standalone yt-dlp...');
-            directUrl = await launcher(this.currentUrl, ytDlpOptions);
-        } catch (err) {
-            if (sessionId !== this.streamSessionId) return;
-            logger.warn(`yt-dlp error fetching URL: ${err.message}`);
+        const videoId = extractVideoId(this.currentUrl);
+        if (!videoId) {
+            logger.error(`Invalid YouTube URL provided: ${this.currentUrl}`);
             this._handleProcessClose();
             return;
         }
 
-        if (sessionId !== this.streamSessionId || !this.shouldRetry) {
-            logger.info('Aborting process launch: Stream session changed.');
-            return;
-        }
+        try {
+            logger.info('Initializing Innertube YouTube.js client...');
+            const { Innertube } = require('youtubei.js');
+            
+            // Initialize Innertube anonymously to prevent WEB cookie mismatch errors with the ANDROID player context
+            const client = await Innertube.create();
 
-        logger.info('Successfully extracted direct stream URL via yt-dlp.');
-        this._startFfmpegStream(directUrl, sessionId, true);
+            if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
+
+            logger.info(`Executing direct /player action with ANDROID client context for video ID: ${videoId}...`);
+            const playerResponse = await client.actions.execute('/player', {
+                videoId,
+                client: 'ANDROID',
+                parse: true
+            });
+            
+            if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
+
+            const streamingData = playerResponse.streaming_data;
+            if (!streamingData) {
+                throw new Error('No streaming data found in player response.');
+            }
+
+            // Live stream detection
+            const isLive = !streamingData.dash_manifest_url && !streamingData.hls_manifest_url ? false : true;
+            
+            let directUrl;
+            if (isLive && streamingData.hls_manifest_url) {
+                logger.info('Live stream detected! Using direct HLS master manifest URL for infinite transcoding.');
+                directUrl = streamingData.hls_manifest_url;
+            } else {
+                const formats = [...(streamingData.formats || []), ...(streamingData.adaptive_formats || [])];
+                // Select itag 140 (128kbps AAC audio in MP4 container, highly compatible and perfect quality/bandwidth ratio)
+                let audioFormat = formats.find(f => f.itag === 140);
+                if (!audioFormat) {
+                    audioFormat = formats.find(f => f.mime_type.startsWith('audio/'));
+                }
+
+                if (!audioFormat) {
+                    throw new Error('No compatible audio format found for this video.');
+                }
+
+                logger.info(`Static video detected! Chose audio format itag ${audioFormat.itag} (${audioFormat.mime_type}). Deciphering direct play URL...`);
+                
+                // AWAIT the decipher call to resolve to direct play URL
+                directUrl = await audioFormat.decipher(client.session.actions.sig_decipherer);
+            }
+
+            if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
+
+            logger.info(`Successfully prepared direct audio stream source (isLive: ${isLive})! Spawning FFmpeg transcoder...`);
+            
+            this._startFfmpegStream(directUrl, sessionId, isLive);
+
+        } catch (err) {
+            if (sessionId !== this.streamSessionId) return;
+            logger.error(`YouTube.js streaming error: ${err.message}`);
+            this._handleProcessClose();
+        }
     }
 
-    _startFfmpegStream(inputSource, sessionId, isYtDlp = false) {
-        if (sessionId !== this.streamSessionId || !this.shouldRetry) {
-            if (inputSource && typeof inputSource.destroy === 'function') {
-                try { inputSource.destroy(); } catch (e) {}
-            }
-            return;
-        }
+    _startFfmpegStream(directUrl, sessionId, isLive = false) {
+        if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
-        // Create fluent-ffmpeg command reading from the dynamic source
-        const cmd = ffmpeg(inputSource);
+        // Create fluent-ffmpeg command reading from the direct URL
+        const cmd = ffmpeg(directUrl);
         
-        if (isYtDlp) {
+        // Pacing standard non-live video frames to match real-time audio playback
+        if (!isLive) {
             cmd.inputOptions('-re');
         }
 
         this.ffmpegCommand = cmd
             .audioCodec('libmp3lame')
-            .audioBitrate('16k')
+            .audioBitrate('128k') // High-quality 128kbps MP3 audio for premium listening experience
             .format('mp3')
             .on('start', (commandLine) => {
-                logger.info(`Spawned fluent-ffmpeg`);
+                logger.info('fluent-ffmpeg process spawned successfully.');
             })
             .on('error', (err) => {
                 if (err.message.includes('SIGKILL') || err.message.includes('ffmpeg was killed')) return; // Ignore intentional kills
@@ -311,9 +196,10 @@ class StreamService extends EventEmitter {
 
             if (!this.isOnline) {
                 this.isOnline = true;
-                logger.info('Stream is now online and broadcasting via Node modules.');
+                logger.info('Stream is now online and broadcasting via automatic FFmpeg transcoder.');
                 this.emit('status-change');
             }
+
             for (const res of this.listeners) {
                 try {
                     res.write(chunk);
@@ -360,7 +246,7 @@ class StreamService extends EventEmitter {
         this.streamSessionId++;
         this.shouldRetry = false;
         clearTimeout(this.retryTimeout);
-        clearInterval(this.watchdogInterval);
+        this.watchdogInterval = null;
         if (clearUrl) {
             this.currentUrl = null;
         }
@@ -379,7 +265,10 @@ class StreamService extends EventEmitter {
         this.listeners.add(res);
         logger.info(`Listener added. Total listeners: ${this.listeners.size}`);
         
-        // Burst on connect: send the last 64KB immediately so browser buffers instantly
+        // Send correct content-type header for standard MP3
+        res.setHeader('Content-Type', 'audio/mpeg');
+        
+        // Burst on connect: send the last 128KB immediately so browser buffers instantly
         if (this.burstBuffer.length > 0) {
             const burstData = Buffer.concat(this.burstBuffer);
             try {

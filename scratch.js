@@ -1,53 +1,67 @@
-const ytdl = require('@distube/ytdl-core');
-const fs = require('fs');
-const path = require('path');
+const { Innertube } = require('youtubei.js');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
 
-async function testStream() {
-    console.log('Testing @distube/ytdl-core streaming...');
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+async function testFfmpegHls() {
+    console.log('Testing continuous FFmpeg HLS manifest transcoding...');
     try {
-        const cookiesPath = path.join(__dirname, 'cookies.txt');
-        const options = {
-            filter: 'audioonly',
-            quality: 'highestaudio'
-        };
+        const client = await Innertube.create();
+        const videoId = '4klRth5QQ8E'; // Lofi Girl Live
+        
+        console.log('Fetching live player info...');
+        const playerResponse = await client.actions.execute('/player', {
+            videoId,
+            client: 'ANDROID',
+            parse: true
+        });
 
-        if (fs.existsSync(cookiesPath)) {
-            console.log('Applying cookies.txt for authentication...');
-            // ytdl-core accepts cookies as an array of objects or parsed cookie string/header
-            // But distube/ytdl-core has direct support for cookies from a cookie header or file
-            // Let's pass the raw cookies or parse them!
-            // Wait, distube/ytdl-core can accept cookies via standard headers or requestOptions:
-            // options.requestOptions = {
-            //     headers: {
-            //         Cookie: fs.readFileSync(cookiesPath, 'utf8')
-            //     }
-            // };
+        const streamingData = playerResponse.streaming_data;
+        if (!streamingData || !streamingData.hls_manifest_url) {
+            console.error('No HLS manifest URL found!');
+            process.exit(1);
         }
 
-        const stream = ytdl('https://www.youtube.com/watch?v=4klRth5QQ8E', options);
+        const hlsUrl = streamingData.hls_manifest_url;
+        console.log('HLS Manifest URL resolved:', hlsUrl);
 
-        stream.on('info', (info) => {
-            console.log('Successfully fetched video info!');
-            console.log('Title:', info.videoDetails.title);
-            console.log('Is Live Broadcast:', info.videoDetails.isLiveContent);
-        });
+        console.log('Spawning fluent-ffmpeg with HLS manifest input...');
+        const cmd = ffmpeg(hlsUrl)
+            .audioCodec('libmp3lame')
+            .audioBitrate('128k')
+            .format('mp3')
+            .on('start', (commandLine) => {
+                console.log('FFmpeg spawned successfully with command:', commandLine);
+            })
+            .on('error', (err) => {
+                console.error('FFmpeg error:', err.message);
+                process.exit(1);
+            })
+            .on('end', () => {
+                console.log('FFmpeg stream ended naturally.');
+                process.exit(0);
+            });
 
+        const stream = cmd.pipe();
+        
+        let chunkCount = 0;
         stream.on('data', (chunk) => {
-            console.log(`Received chunk of size: ${chunk.length} bytes`);
-            // We got data, so it works! Terminate early
-            console.log('SUCCESS: Stream data is flowing! @distube/ytdl-core works perfectly!');
-            process.exit(0);
-        });
-
-        stream.on('error', (err) => {
-            console.error('Stream error event:', err.message);
-            process.exit(1);
+            chunkCount++;
+            console.log(`[Chunk #${chunkCount}] Transcoded MP3 bytes received: ${chunk.length}`);
+            
+            if (chunkCount >= 10) {
+                console.log('SUCCESS: Received 10 consecutive transcoded MP3 chunks successfully!');
+                console.log('VERIFIED: FFmpeg continuous HLS transcoding is 100% operational!');
+                try { cmd.kill('SIGKILL'); } catch (e) {}
+                process.exit(0);
+            }
         });
 
     } catch (err) {
-        console.error('Catch error:', err.message);
+        console.error('Test failed:', err);
         process.exit(1);
     }
 }
 
-testStream();
+testFfmpegHls();
