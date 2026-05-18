@@ -1,13 +1,13 @@
 const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
-const ffmpegStatic = require('ffmpeg-static');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const youtubedl = require('youtube-dl-exec');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
 
 // Tell fluent-ffmpeg to use the locally installed static binary
-ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 class StreamService extends EventEmitter {
     constructor() {
