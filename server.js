@@ -11,6 +11,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
+const https = require('https');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
@@ -60,15 +62,120 @@ app.use(express.static(path.join(__dirname, 'public')));
 // 4. ASYNCHRONOUS INITIALIZATION
 // Load routes and initialize database/streams non-blockingly using lazy-loading
 // ==========================================
+// Robust self-contained standalone Python 3 runner installer & verifier
+async function ensurePython3() {
+    if (process.platform === 'win32') {
+        logger.info('Hostinger Environment: Running on Windows. Skipping Linux Python 3 check.');
+        return;
+    }
+
+    return new Promise((resolve) => {
+        exec('python3 --version', async (err, stdout, stderr) => {
+            if (!err) {
+                const version = (stdout || stderr).trim();
+                logger.info(`System Python 3 is already installed: ${version}`);
+                resolve();
+                return;
+            }
+
+            const localBinDir = path.join(__dirname, 'bin');
+            const localPythonDir = path.join(localBinDir, 'python');
+            const localPythonExe = path.join(localPythonDir, 'bin/python3');
+
+            if (fs.existsSync(localPythonExe)) {
+                const localPythonBinPath = path.join(localPythonDir, 'bin');
+                process.env.PATH = `${localPythonBinPath}:${process.env.PATH}`;
+                logger.info(`Portable Python 3 runtime verified at: ${localPythonExe}`);
+                resolve();
+                return;
+            }
+
+            logger.info('Hostinger Environment: System Python 3 is missing. Automating installation of self-contained standalone Python 3 runtime...');
+
+            if (!fs.existsSync(localBinDir)) {
+                fs.mkdirSync(localBinDir, { recursive: true });
+            }
+
+            const archivePath = path.join(localBinDir, 'python.tar.gz');
+
+            try {
+                await new Promise((dlResolve, dlReject) => {
+                    const file = fs.createWriteStream(archivePath);
+                    function download(url) {
+                        https.get(url, (response) => {
+                            if (response.statusCode === 302 || response.statusCode === 301) {
+                                download(response.headers.location);
+                                return;
+                            }
+                            if (response.statusCode !== 200) {
+                                dlReject(new Error(`Failed to download python runtime: HTTP ${response.statusCode}`));
+                                return;
+                            }
+                            response.pipe(file);
+                            file.on('finish', () => {
+                                file.close();
+                                dlResolve();
+                            });
+                        }).on('error', (dlErr) => {
+                            fs.unlink(archivePath, () => {});
+                            dlReject(dlErr);
+                        });
+                    }
+                    download('https://github.com/indygreg/python-build-standalone/releases/download/20240107/cpython-3.10.13+20240107-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz');
+                });
+
+                logger.info('Standalone Python 3 archive downloaded successfully. Extracting tarball...');
+
+                await new Promise((extResolve, extReject) => {
+                    exec(`tar -xzf "${archivePath}" -C "${localBinDir}"`, (extErr, extStdout, extStderr) => {
+                        if (extErr) {
+                            extReject(new Error(extStderr || extErr.message));
+                            return;
+                        }
+                        extResolve();
+                    });
+                });
+
+                try { fs.unlinkSync(archivePath); } catch (e) {}
+
+                const localPythonBinPath = path.join(localPythonDir, 'bin');
+                try {
+                    fs.chmodSync(localPythonExe, 0o755);
+                    fs.chmodSync(path.join(localPythonBinPath, 'python'), 0o755);
+                } catch (chmodErr) {
+                    logger.warn(`Could not set permissions: ${chmodErr.message}`);
+                }
+
+                process.env.PATH = `${localPythonBinPath}:${process.env.PATH}`;
+
+                logger.info(`Standalone portable Python 3 runtime installed successfully at: ${localPythonExe}`);
+                
+                exec('python3 --version', (checkErr, checkStdout, checkStderr) => {
+                    if (checkErr) {
+                        logger.error(`Failed to verify installed Python 3: ${checkStderr || checkErr.message}`);
+                    } else {
+                        logger.info(`Verified local Python 3 installation successfully: ${(checkStdout || checkStderr).trim()}`);
+                    }
+                    resolve();
+                });
+
+            } catch (installErr) {
+                logger.error(`Failed to install standalone Python 3 runtime: ${installErr.message}`);
+                resolve();
+            }
+        });
+    });
+}
+
 let db;
 let streamService;
 let apiRoutes;
 let authRoutes;
 
 // Safe asynchronous service bootstrap
-// Safe asynchronous service bootstrap
-setImmediate(() => {
+setImmediate(async () => {
     try {
+        await ensurePython3();
         logger.info('[STARTUP] Initializing database layer non-blockingly...');
         db = require('./services/db');
         
