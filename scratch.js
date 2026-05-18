@@ -1,53 +1,66 @@
+const { execFile } = require('child_process');
 const youtubedl = require('youtube-dl-exec');
+const dlpPath = youtubedl.constants.YOUTUBE_DL_PATH;
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
-async function testYtDlpExec() {
-    console.log('Testing youtube-dl-exec -> ffmpeg -> pipe pipeline with bestaudio/best fallback...');
+async function testYtDlpExecFile() {
+    console.log('Testing direct child_process.execFile of youtube-dl-exec binary...');
     try {
+        console.log(`Pre-packaged yt-dlp path: ${dlpPath}`);
+
         const videoId = '4klRth5QQ8E'; // Lofi Girl Live
         const url = `https://www.youtube.com/watch?v=${videoId}`;
 
-        console.log(`Querying direct URL using youtube-dl-exec for: ${url}`);
-        const directUrl = await youtubedl(url, {
-            getUrl: true,
-            format: 'bestaudio/best'
-        });
+        const args = [url, '--get-url', '--format', 'bestaudio/best'];
 
-        console.log(`SUCCESS: Extracted URL: ${directUrl}`);
-
-        console.log('Spawning fluent-ffmpeg with HLS manifest input...');
-        const cmd = ffmpeg(directUrl)
-            .audioCodec('libmp3lame')
-            .audioBitrate('128k')
-            .format('mp3')
-            .on('start', (commandLine) => {
-                console.log('FFmpeg spawned successfully with command:', commandLine);
-            })
-            .on('error', (err) => {
-                console.error('FFmpeg error:', err.message);
-                process.exit(1);
-            })
-            .on('end', () => {
-                console.log('FFmpeg stream ended naturally.');
-                process.exit(0);
-            });
-
-        const stream = cmd.pipe();
-        
-        let chunkCount = 0;
-        stream.on('data', (chunk) => {
-            chunkCount++;
-            console.log(`[Chunk #${chunkCount}] Transcoded MP3 bytes received: ${chunk.length}`);
-            
-            if (chunkCount >= 10) {
-                console.log('SUCCESS: Received 10 consecutive transcoded MP3 chunks successfully!');
-                console.log('VERIFIED: youtube-dl-exec -> FFmpeg pipeline with bestaudio/best fallback is 100% operational!');
-                try { cmd.kill('SIGKILL'); } catch (e) {}
-                process.exit(0);
+        console.log(`Executing execFile with arguments: ${args.join(' ')}`);
+        execFile(dlpPath, args, (error, stdout, stderr) => {
+            if (stderr) {
+                console.log(`[yt-dlp warning/stderr]: ${stderr.trim()}`);
             }
+
+            if (error) {
+                console.error(`CRITICAL: yt-dlp failed with exit code: ${error.code}`);
+                process.exit(1);
+            }
+
+            const directUrl = stdout.trim();
+            console.log(`\nSUCCESS: Extracted Direct URL: ${directUrl}`);
+
+            console.log('Spawning fluent-ffmpeg with HLS manifest input...');
+            const cmd = ffmpeg(directUrl)
+                .audioCodec('libmp3lame')
+                .audioBitrate('128k')
+                .format('mp3')
+                .on('start', (commandLine) => {
+                    console.log('FFmpeg spawned successfully with command:', commandLine);
+                })
+                .on('error', (err) => {
+                    console.error('FFmpeg error:', err.message);
+                    process.exit(1);
+                })
+                .on('end', () => {
+                    console.log('FFmpeg stream ended naturally.');
+                    process.exit(0);
+                });
+
+            const stream = cmd.pipe();
+            
+            let chunkCount = 0;
+            stream.on('data', (chunk) => {
+                chunkCount++;
+                console.log(`[Chunk #${chunkCount}] Transcoded MP3 bytes received: ${chunk.length}`);
+                
+                if (chunkCount >= 10) {
+                    console.log('SUCCESS: Received 10 consecutive transcoded MP3 chunks successfully!');
+                    console.log('VERIFIED: execFile -> FFmpeg pipeline is 100% operational and immune to stderr warnings!');
+                    try { cmd.kill('SIGKILL'); } catch (e) {}
+                    process.exit(0);
+                }
+            });
         });
 
     } catch (err) {
@@ -56,4 +69,4 @@ async function testYtDlpExec() {
     }
 }
 
-testYtDlpExec();
+testYtDlpExecFile();

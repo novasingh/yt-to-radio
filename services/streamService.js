@@ -94,7 +94,7 @@ class StreamService extends EventEmitter {
         }, 5000);
     }
 
-    async _launchProcesses() {
+    _launchProcesses() {
         if (!this.currentUrl) return;
 
         const sessionId = this.streamSessionId;
@@ -108,35 +108,52 @@ class StreamService extends EventEmitter {
         }
 
         try {
-            logger.info('Querying direct URL using youtube-dl-exec (yt-dlp)...');
+            logger.info('Querying direct URL using pre-packaged youtube-dl-exec (yt-dlp) binary...');
             
             const cookiesPath = getCookiesPath();
-            const options = {
-                getUrl: true,
-                format: 'bestaudio/best'
-            };
+            const dlpPath = youtubedl.constants.YOUTUBE_DL_PATH;
 
+            const args = [this.currentUrl, '--get-url', '--format', 'bestaudio/best'];
             if (cookiesPath) {
-                options.cookies = cookiesPath;
-                logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied session cookies to youtube-dl-exec.`);
+                args.push('--cookies', cookiesPath);
+                logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied session cookies to yt-dlp.`);
             }
 
-            // Extract the direct stream URL using the latest yt-dlp binary managed automatically by youtube-dl-exec
-            const directUrl = await youtubedl(this.currentUrl, options);
+            const { execFile } = require('child_process');
 
-            if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
+            execFile(dlpPath, args, (error, stdout, stderr) => {
+                if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
-            logger.info(`SUCCESS: Extracted direct stream URL: ${directUrl}`);
+                // Log standard yt-dlp warnings safely to prevent masking
+                if (stderr && stderr.trim()) {
+                    logger.warn(`yt-dlp stderr output: ${stderr.trim()}`);
+                }
 
-            // Detect live stream based on index.m3u8 presence or manifest flags
-            const isLive = directUrl.includes('index.m3u8') || directUrl.includes('manifest');
-            logger.info(`Spawning fluent-ffmpeg transcoder (isLive: ${isLive})...`);
+                if (error) {
+                    logger.error(`yt-dlp execution error: ${error.message}`);
+                    this._handleProcessClose();
+                    return;
+                }
 
-            this._startFfmpegStream(directUrl, sessionId, isLive);
+                const directUrl = stdout.trim();
+                if (!directUrl) {
+                    logger.error('yt-dlp did not return any stream URL.');
+                    this._handleProcessClose();
+                    return;
+                }
+
+                logger.info(`SUCCESS: Extracted direct stream URL: ${directUrl}`);
+
+                // Detect live stream based on index.m3u8 presence or manifest flags
+                const isLive = directUrl.includes('index.m3u8') || directUrl.includes('manifest');
+                logger.info(`Spawning fluent-ffmpeg transcoder (isLive: ${isLive})...`);
+
+                this._startFfmpegStream(directUrl, sessionId, isLive);
+            });
 
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
-            logger.error(`youtube-dl-exec / yt-dlp streaming error: ${err.message}`);
+            logger.error(`youtube-dl-exec / yt-dlp launcher error: ${err.message}`);
             this._handleProcessClose();
         }
     }
