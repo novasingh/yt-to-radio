@@ -119,6 +119,20 @@ class StreamService extends EventEmitter {
                 logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied session cookies to yt-dlp.`);
             }
 
+            // Dynamically fix execution permissions on Linux/Unix systems if missing (prevent EACCES)
+            if (process.platform !== 'win32') {
+                try {
+                    const stats = fs.statSync(dlpPath);
+                    const isExecutable = (stats.mode & fs.constants.S_IXUSR) !== 0;
+                    if (!isExecutable) {
+                        logger.info(`Setting executable permissions 0755 on yt-dlp binary at: ${dlpPath}`);
+                        fs.chmodSync(dlpPath, '0755');
+                    }
+                } catch (chmodErr) {
+                    logger.warn(`Failed to verify or set permissions on yt-dlp binary: ${chmodErr.message}`);
+                }
+            }
+
             const { execFile } = require('child_process');
 
             execFile(dlpPath, args, (error, stdout, stderr) => {
