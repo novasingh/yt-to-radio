@@ -6,8 +6,21 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
 
-// Tell fluent-ffmpeg to use the locally installed static binary
-ffmpeg.setFfmpegPath(ffmpegStatic);
+// Smart FFmpeg Path Selector:
+// 1. If process.env.FFMPEG_PATH is explicitly set, use it.
+// 2. On Windows host (local development), use the static fallback binary.
+// 3. On Linux/production/Docker, prioritize the system-installed native FFmpeg (100% stable/optimized),
+//    falling back to ffmpeg-static only if a native binary is not found.
+if (process.env.FFMPEG_PATH) {
+    ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+} else if (process.platform === 'win32') {
+    ffmpeg.setFfmpegPath(ffmpegStatic);
+} else {
+    const hasSystemFfmpeg = fs.existsSync('/usr/bin/ffmpeg') || fs.existsSync('/usr/local/bin/ffmpeg');
+    if (!hasSystemFfmpeg) {
+        ffmpeg.setFfmpegPath(ffmpegStatic);
+    }
+}
 
 class StreamService extends EventEmitter {
     constructor() {
