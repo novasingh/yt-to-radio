@@ -124,6 +124,8 @@ playBtn.addEventListener('click', () => {
     }
 });
 
-// Update status every 5 seconds
-updateStatus();
-statusInterval = setInterval(updateStatus, 5000);
+// Delay the first status API call by 5 seconds to allow the server's asynchronous bootstrap to complete cleanly
+setTimeout(() => {
+    updateStatus();
+    statusInterval = setInterval(updateStatus, 5000);
+}, 5000);

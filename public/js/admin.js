@@ -282,6 +282,8 @@ confirmDeleteBtn.addEventListener('click', async () => {
     }
 });
 
-// Auto update status
-updateStreamStatus();
-setInterval(updateStreamStatus, 3000);
+// Delay the first status API call by 5 seconds to allow the server's asynchronous bootstrap to complete cleanly
+setTimeout(() => {
+    updateStreamStatus();
+    setInterval(updateStreamStatus, 5000);
+}, 5000);
