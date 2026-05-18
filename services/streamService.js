@@ -7,7 +7,11 @@ const path = require('path');
 const logger = require('../utils/logger');
 
 // Tell fluent-ffmpeg to use the locally installed static binary
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+try {
+    ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+} catch (ffmpegErr) {
+    logger.error(`Failed to set local FFmpeg path: ${ffmpegErr.message}`);
+}
 
 class StreamService extends EventEmitter {
     constructor() {
