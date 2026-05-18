@@ -1,7 +1,11 @@
-/**
- * YouTube to Radio Streamer - Hostinger Stable Production Entry
- * Fully optimized for low-resource shared-hosting, asynchronous-safe, and self-healing.
- */
+// Programmatically suppress Node's SQLite ExperimentalWarning to keep Hostinger logs pristine and clean
+const originalEmitWarning = process.emitWarning;
+process.emitWarning = (warning, ...args) => {
+    if (typeof warning === 'string' && warning.includes('SQLite is an experimental feature')) {
+        return;
+    }
+    return originalEmitWarning(warning, ...args);
+};
 
 const express = require('express');
 const cors = require('cors');
