@@ -1,6 +1,19 @@
+// Core Node.js modules (always available)
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// Self-Healing Startup: Forcefully ensure all packages are installed before running the server code
+try {
+    console.log('[STARTUP] Verifying and enforcing dependencies via npm run install:force...');
+    execSync('npm run install:force', { stdio: 'inherit' });
+    console.log('[STARTUP] Dependencies verified and fully synchronized.');
+} catch (err) {
+    console.warn('[STARTUP] Warning: Self-healing startup installation bypassed or failed:', err.message);
+}
+
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
