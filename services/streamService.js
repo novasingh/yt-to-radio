@@ -135,18 +135,20 @@ class StreamService extends EventEmitter {
             
             const cookiesPath = getCookiesPath();
             const config = {};
+            let hasCookies = false;
             
             if (cookiesPath) {
                 const cookieString = getCookieHeaderString(cookiesPath);
                 if (cookieString) {
                     config.cookie = cookieString;
+                    hasCookies = true;
                     logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied session cookies successfully to YouTube.js.`);
                 }
             } else {
                 logger.warn('WARNING: cookies.txt was NOT found on this server! YouTube.js requests will be unauthenticated.');
             }
 
-            const client = await Innertube.create(config);
+            let client = await Innertube.create(config);
 
             if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
@@ -154,6 +156,7 @@ class StreamService extends EventEmitter {
             let playerResponse = null;
             let lastErr = null;
 
+            // Try 1: Attempt extraction with loaded session cookies
             for (const clientName of clientsToTry) {
                 try {
                     logger.info(`Executing client.getBasicInfo() with ${clientName} client context for video ID: ${videoId}...`);
@@ -167,6 +170,28 @@ class StreamService extends EventEmitter {
                 } catch (err) {
                     lastErr = err;
                     logger.warn(`WARNING: Failed extraction using ${clientName} client context: ${err.message}. Trying next client...`);
+                }
+            }
+
+            // Try 2: If we had cookies and everything failed, the cookies are likely expired or corrupt! Fall back to anonymous client context.
+            if ((!playerResponse || !playerResponse.streaming_data) && hasCookies) {
+                logger.warn('WARNING: All authenticated client attempts failed. Your cookies.txt might be expired or corrupt! Retrying with clean ANONYMOUS context...');
+                client = await Innertube.create(); // Create clean anonymous client with 0 cookies
+                
+                for (const clientName of clientsToTry) {
+                    try {
+                        logger.info(`Executing ANONYMOUS client.getBasicInfo() with ${clientName} client context for video ID: ${videoId}...`);
+                        playerResponse = await client.getBasicInfo(videoId, clientName);
+                        if (playerResponse && playerResponse.streaming_data) {
+                            logger.info(`SUCCESS: Extracted streaming data successfully using ANONYMOUS ${clientName} client context!`);
+                            break;
+                        } else {
+                            logger.warn(`WARNING: No streaming data returned using ANONYMOUS ${clientName} client context. Trying next client...`);
+                        }
+                    } catch (err) {
+                        lastErr = err;
+                        logger.warn(`WARNING: Failed ANONYMOUS extraction using ${clientName} client context: ${err.message}. Trying next client...`);
+                    }
                 }
             }
 
