@@ -29,6 +29,55 @@ if (customYtDlpPath) {
     }
 }
 
+// Prerequisite Python shim setter: Resolve Hostinger "env: python3: No such file or directory" issue programmatically
+function setupPythonShim() {
+    if (process.platform === 'win32') return;
+
+    logger.info('Verifying Python runtime environment on Hostinger VPS...');
+    let hasPython3 = false;
+    let hasPython = false;
+
+    try {
+        require('child_process').execSync('which python3', { stdio: 'ignore' });
+        hasPython3 = true;
+        logger.info('Python Check: python3 is already available natively on system PATH.');
+    } catch (e) {}
+
+    if (!hasPython3) {
+        try {
+            require('child_process').execSync('which python', { stdio: 'ignore' });
+            hasPython = true;
+            logger.info('Python Check: python3 is missing, but system fallback python is available.');
+        } catch (e) {}
+
+        if (hasPython) {
+            const shimDir = path.join(__dirname, '../bin');
+            const shimPath = path.join(shimDir, 'python3');
+
+            try {
+                if (!fs.existsSync(shimDir)) {
+                    fs.mkdirSync(shimDir, { recursive: true });
+                }
+
+                // Write a shell wrapper that forwards all arguments to the system 'python' command
+                const shimContent = `#!/bin/sh\nexec python "$@"\n`;
+                fs.writeFileSync(shimPath, shimContent, 'utf8');
+                fs.chmodSync(shimPath, 0o755);
+
+                // Prepend our local bin shim directory to the process PATH variable
+                process.env.PATH = shimDir + ':' + process.env.PATH;
+                logger.info(`Hostinger Python Shim active: Prepend local wrapper '${shimDir}' to process PATH.`);
+            } catch (shimErr) {
+                logger.error(`Failed to create Hostinger Python wrapper shim: ${shimErr.message}`);
+            }
+        } else {
+            logger.warn('WARNING: Neither python3 nor python could be resolved in system PATH. Streaming extraction may fail.');
+        }
+    }
+}
+
+setupPythonShim();
+
 // Tell fluent-ffmpeg to use the locally installed static binary
 try {
     ffmpeg.setFfmpegPath(ffmpegInstaller.path);
