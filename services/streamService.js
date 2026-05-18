@@ -28,7 +28,7 @@ async function getYoutubeDl() {
 
     // On Linux/Hostinger, check and run standalone compiled self-contained yt-dlp binary (needs 0% Python!)
     const binDir = path.join(__dirname, '../bin');
-    const binaryPath = path.join(binDir, 'yt-dlp');
+    const binaryPath = path.join(binDir, 'yt-dlp_linux');
 
     if (fs.existsSync(binaryPath)) {
         logger.info(`Standalone self-contained yt-dlp binary found at: ${binaryPath}`);
@@ -74,7 +74,7 @@ async function getYoutubeDl() {
             });
         }
 
-        download('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp');
+        download('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux');
     });
 
     youtubedl = youtubedlModule.create(binaryPath);
