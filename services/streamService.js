@@ -151,7 +151,60 @@ class StreamService extends EventEmitter {
 
         const sessionId = this.streamSessionId;
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
+
+        let ytdlSuccess = false;
         
+        try {
+            logger.info('Attempting stream extraction via @distube/ytdl-core...');
+            const ytdl = require('@distube/ytdl-core');
+            
+            const cookiesPath = path.join(__dirname, '../cookies.txt');
+            const ytdlOptions = {
+                filter: 'audioonly',
+                quality: 'highestaudio'
+            };
+
+            if (fs.existsSync(cookiesPath)) {
+                // Apply cookies as standard header if cookies.txt is present
+                const cookiesContent = fs.readFileSync(cookiesPath, 'utf8');
+                ytdlOptions.requestOptions = {
+                    headers: {
+                        Cookie: cookiesContent
+                    }
+                };
+                logger.info('Applied cookies.txt to @distube/ytdl-core request headers.');
+            }
+
+            const ytdlStream = ytdl(this.currentUrl, ytdlOptions);
+
+            ytdlStream.on('error', (ytdlErr) => {
+                if (ytdlSuccess) return;
+                logger.warn(`@distube/ytdl-core failed: ${ytdlErr.message}. Falling back seamlessly to standalone yt-dlp...`);
+                this._launchYtDlpProcesses(sessionId);
+            });
+
+            ytdlStream.once('readable', () => {
+                if (sessionId !== this.streamSessionId) {
+                    try { ytdlStream.destroy(); } catch (e) {}
+                    return;
+                }
+                
+                ytdlSuccess = true;
+                logger.info('Successfully extracted stream via @distube/ytdl-core!');
+                this._startFfmpegStream(ytdlStream, sessionId, false);
+            });
+
+        } catch (err) {
+            logger.warn(`Failed to initialize @distube/ytdl-core: ${err.message}. Falling back seamlessly to standalone yt-dlp...`);
+            if (sessionId === this.streamSessionId) {
+                this._launchYtDlpProcesses(sessionId);
+            }
+        }
+    }
+
+    async _launchYtDlpProcesses(sessionId) {
+        if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
+
         let directUrl;
         try {
             // Lazy-load and build our standalone self-contained yt-dlp binary
@@ -182,19 +235,31 @@ class StreamService extends EventEmitter {
             return;
         }
 
-        // In case stopStream or startStream was called while we were awaiting the URL
         if (sessionId !== this.streamSessionId || !this.shouldRetry) {
             logger.info('Aborting process launch: Stream session changed.');
             return;
         }
 
-        logger.info('Successfully extracted direct stream URL.');
+        logger.info('Successfully extracted direct stream URL via yt-dlp.');
+        this._startFfmpegStream(directUrl, sessionId, true);
+    }
 
-        // Create fluent-ffmpeg command reading from the direct URL
-        this.ffmpegCommand = ffmpeg(directUrl)
-            // -re tells ffmpeg to read input at native frame rate. 
-            // This is CRITICAL so non-live videos don't finish transcoding in 2 seconds and stop the stream.
-            .inputOptions('-re') 
+    _startFfmpegStream(inputSource, sessionId, isYtDlp = false) {
+        if (sessionId !== this.streamSessionId || !this.shouldRetry) {
+            if (inputSource && typeof inputSource.destroy === 'function') {
+                try { inputSource.destroy(); } catch (e) {}
+            }
+            return;
+        }
+
+        // Create fluent-ffmpeg command reading from the dynamic source
+        const cmd = ffmpeg(inputSource);
+        
+        if (isYtDlp) {
+            cmd.inputOptions('-re');
+        }
+
+        this.ffmpegCommand = cmd
             .audioCodec('libmp3lame')
             .audioBitrate('16k')
             .format('mp3')
