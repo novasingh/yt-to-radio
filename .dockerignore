@@ -1,5 +1,8 @@
 # Ignore standard dependencies and build artifacts
-node_modules/
+node_modules
+node_modules/**
+**/node_modules
+**/node_modules/**
 npm-debug.log
 yarn-error.log
 
