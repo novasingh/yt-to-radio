@@ -8,6 +8,7 @@ FROM node:20-slim
 # 4. build-essential: Required to compile sqlite3 from source for perfect GLIBC compatibility
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
+    python-is-python3 \
     ffmpeg \
     ca-certificates \
     build-essential \
@@ -20,7 +21,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install production dependencies only (compiling sqlite3 from source quietly)
-RUN npm install --omit=dev --build-from-source --loglevel=error --no-audit --no-fund
+RUN npm install --force --omit=dev --build-from-source --loglevel=error --no-audit --no-fund
 
 # Copy the rest of the application source code
 COPY . .
@@ -32,11 +33,11 @@ RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 
 # Expose default application port
-EXPOSE 3000
+EXPOSE 80
 
 # Set standard environment variables for production execution
-ENV NODE_ENV=production
-ENV PORT=3000
+ENV NODE_ENV=development
+ENV PORT=80
 ENV DATABASE_PATH=/app/data/database.sqlite
 ENV COOKIES_PATH=/app/data/cookies.txt
 

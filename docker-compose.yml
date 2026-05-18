@@ -9,13 +9,13 @@ services:
     restart: unless-stopped
     ports:
       # Maps host port 3000 to container port 3000
-      - "3000:3000"
+      - "80:80"
     volumes:
       # Persists SQLite database and cookies.txt inside a local './data' folder
       - ./data:/app/data
     environment:
       - NODE_ENV=${NODE_ENV:-development}
-      - PORT=3000
+      - PORT=80
       # Pass custom admin logins and JWT secret from local .env (or fallback to defaults)
       - SUPER_ADMIN_USER=${SUPER_ADMIN_USER:-admin}
       - SUPER_ADMIN_PASS=${SUPER_ADMIN_PASS:-admin123}

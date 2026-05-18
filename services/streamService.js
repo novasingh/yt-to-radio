@@ -6,11 +6,25 @@ const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
 
-// Tell fluent-ffmpeg to use the locally installed static binary
+// Tell fluent-ffmpeg to use the locally installed static binary, unless a system ffmpeg is available
 try {
-    ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+    const { execSync } = require('child_process');
+    let hasSystemFfmpeg = false;
+    try {
+        execSync('ffmpeg -version', { stdio: 'ignore' });
+        hasSystemFfmpeg = true;
+    } catch (e) {
+        // system ffmpeg not available
+    }
+
+    if (hasSystemFfmpeg) {
+        logger.info('System-wide FFmpeg detected in PATH. Using system FFmpeg.');
+    } else {
+        logger.info(`No system-wide FFmpeg detected. Falling back to local static binary: ${ffmpegInstaller.path}`);
+        ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+    }
 } catch (ffmpegErr) {
-    logger.error(`Failed to set local FFmpeg path: ${ffmpegErr.message}`);
+    logger.error(`Failed to configure FFmpeg path: ${ffmpegErr.message}`);
 }
 
 class StreamService extends EventEmitter {
@@ -47,10 +61,10 @@ class StreamService extends EventEmitter {
     _startWatchdog() {
         clearInterval(this.watchdogInterval);
         this.watchdogInterval = setInterval(() => {
-            if (this.isOnline && this.ffmpegCommand) {
+            if (this.ffmpegCommand) {
                 const timeSinceLastChunk = Date.now() - this.lastChunkTime;
-                if (timeSinceLastChunk > 15000) {
-                    logger.error('Watchdog: No audio chunks received for 15s. Restarting stream.');
+                if (timeSinceLastChunk > 20000) {
+                    logger.error('Watchdog: Stream stalled or no audio chunks received for 20s. Restarting stream.');
                     this._handleProcessClose();
                 }
             }
@@ -61,6 +75,7 @@ class StreamService extends EventEmitter {
         if (!this.currentUrl) return;
 
         const sessionId = this.streamSessionId;
+        this.lastChunkTime = Date.now(); // Reset timer on launching processes
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
 
         // Define standard yt-dlp extraction options
@@ -111,6 +126,12 @@ class StreamService extends EventEmitter {
             .format('mp3')
             .on('start', (commandLine) => {
                 logger.info(`Spawned fluent-ffmpeg`);
+            })
+            .on('stderr', (stderrLine) => {
+                // Log critical ffmpeg warnings/errors to assist debugging
+                if (stderrLine.includes('Error') || stderrLine.includes('403') || stderrLine.includes('Server returned') || stderrLine.includes('Invalid')) {
+                    logger.warn(`ffmpeg stderr: ${stderrLine.trim()}`);
+                }
             })
             .on('error', (err) => {
                 if (err.message.includes('SIGKILL') || err.message.includes('ffmpeg was killed')) return; // Ignore intentional kills
