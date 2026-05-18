@@ -7,6 +7,20 @@ const path = require('path');
 const https = require('https');
 const logger = require('../utils/logger');
 
+// Setup execute-permitted local temp directory to bypass Hostinger's `/tmp` noexec restriction
+const localTmpDir = path.join(__dirname, '../tmp');
+if (!fs.existsSync(localTmpDir)) {
+    try {
+        fs.mkdirSync(localTmpDir, { recursive: true });
+    } catch (err) {
+        logger.error(`Failed to create local tmp directory: ${err.message}`);
+    }
+}
+process.env.TMPDIR = localTmpDir;
+process.env.TEMP = localTmpDir;
+process.env.TMP = localTmpDir;
+logger.info(`Locked execute-permitted local temp directory to bypass noexec: ${localTmpDir}`);
+
 // Lazy-loaded executable builder
 let youtubedl = null;
 
