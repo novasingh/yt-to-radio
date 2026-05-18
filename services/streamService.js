@@ -21,6 +21,21 @@ process.env.TEMP = localTmpDir;
 process.env.TMP = localTmpDir;
 logger.info(`Locked execute-permitted local temp directory to bypass noexec: ${localTmpDir}`);
 
+// Helper to search and find the cookies.txt file across multiple locations
+function getCookiesPath() {
+    const paths = [
+        path.join(__dirname, '../cookies.txt'),
+        path.join(__dirname, 'cookies.txt'),
+        path.join(process.cwd(), 'cookies.txt')
+    ];
+    for (const p of paths) {
+        if (fs.existsSync(p)) {
+            return p;
+        }
+    }
+    return null;
+}
+
 // Lazy-loaded executable builder
 let youtubedl = null;
 
@@ -158,13 +173,13 @@ class StreamService extends EventEmitter {
             logger.info('Attempting stream extraction via @distube/ytdl-core...');
             const ytdl = require('@distube/ytdl-core');
             
-            const cookiesPath = path.join(__dirname, '../cookies.txt');
+            const cookiesPath = getCookiesPath();
             const ytdlOptions = {
                 filter: 'audioonly',
                 quality: 'highestaudio'
             };
 
-            if (fs.existsSync(cookiesPath)) {
+            if (cookiesPath) {
                 // Apply cookies as standard header if cookies.txt is present
                 const cookiesContent = fs.readFileSync(cookiesPath, 'utf8');
                 ytdlOptions.requestOptions = {
@@ -172,7 +187,9 @@ class StreamService extends EventEmitter {
                         Cookie: cookiesContent
                     }
                 };
-                logger.info('Applied cookies.txt to @distube/ytdl-core request headers.');
+                logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied to @distube/ytdl-core.`);
+            } else {
+                logger.warn('WARNING: cookies.txt was NOT found on this server! YouTube requests will be unauthenticated and may be rate-limited.');
             }
 
             const ytdlStream = ytdl(this.currentUrl, ytdlOptions);
@@ -220,10 +237,12 @@ class StreamService extends EventEmitter {
                 ignoreConfig: true
             };
 
-            const cookiesPath = path.join(__dirname, '../cookies.txt');
-            if (fs.existsSync(cookiesPath)) {
+            const cookiesPath = getCookiesPath();
+            if (cookiesPath) {
                 ytDlpOptions.cookies = cookiesPath;
-                logger.info('Detected cookies.txt in project root. Applying cookies to standalone yt-dlp.');
+                logger.info(`Detected cookies.txt at: ${cookiesPath}. Applying cookies to standalone yt-dlp.`);
+            } else {
+                logger.warn('WARNING: cookies.txt was NOT found on this server! Standalone yt-dlp requests will be unauthenticated and may get 429 blocks.');
             }
 
             logger.info('Extracting direct media stream URL using standalone yt-dlp...');
