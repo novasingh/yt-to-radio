@@ -22,6 +22,11 @@ app.use('/auth', authRoutes);
 
 // The continuous audio stream endpoint
 app.get('/live', (req, res) => {
+    // Explicitly allow Cross-Origin Resource Sharing (CORS) for high compatibility across clients and audio players
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Range');
+
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Transfer-Encoding', 'chunked');
     res.setHeader('Connection', 'keep-alive');
@@ -40,6 +45,11 @@ app.get('/live', (req, res) => {
     // If stream is offline, write empty chunk or just wait
     // Writing a small ID3 tag or silence might help some players, 
     // but just waiting is fine for most HTML5 players.
+});
+
+// Default catch-all route to serve index.html for any unmatched direct URL requests
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
 const server = app.listen(PORT, () => {
