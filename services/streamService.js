@@ -1,68 +1,84 @@
 const { EventEmitter } = require('events');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const { Innertube, Platform } = require('youtubei.js');
-const { Readable } = require('stream');
+const youtubedlModule = require('youtube-dl-exec');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const logger = require('../utils/logger');
 
-// Provide the mandatory JavaScript interpreter for youtubei.js to decipher signatures natively
-Platform.shim.eval = async (data) => {
-    return new Function(data.output)();
-};
+// Lazy-loaded executable builder
+let youtubedl = null;
 
-// Netscape HTTP Cookie File Parser
-function parseNetscapeCookies(filePath) {
-    if (!fs.existsSync(filePath)) return null;
-    const content = fs.readFileSync(filePath, 'utf8');
-    const lines = content.split('\n');
-    const cookiePairs = [];
-    
-    for (const line of lines) {
-        if (line.trim().startsWith('#') || line.trim() === '') continue;
-        
-        const parts = line.split('\t');
-        if (parts.length >= 7) {
-            const name = parts[5].trim();
-            const value = parts[6].trim();
-            if (name && value) {
-                cookiePairs.push(`${name}=${value}`);
-            }
-        }
+async function getYoutubeDl() {
+    if (youtubedl) return youtubedl;
+
+    const customPath = process.env.YT_DLP_PATH;
+    if (customPath) {
+        logger.info(`Using custom YT_DLP_PATH: ${customPath}`);
+        youtubedl = youtubedlModule.create(customPath);
+        return youtubedl;
     }
-    
-    return cookiePairs.join('; ');
-}
 
-// Lazy-loaded Innertube client factory
-let youtubeClient = null;
-async function getYoutubeClient() {
-    if (!youtubeClient) {
-        const cookiesPath = path.join(__dirname, '../cookies.txt');
-        let cookieString = '';
-        if (fs.existsSync(cookiesPath)) {
-            try {
-                cookieString = parseNetscapeCookies(cookiesPath);
-                logger.info('Detected cookies.txt in project root. Parsed Netscape cookies successfully for youtubei.js.');
-            } catch (e) {
-                logger.warn(`Failed to parse cookies.txt: ${e.message}`);
-            }
-        }
-        
-        youtubeClient = await Innertube.create({
-            cookie: cookieString || undefined
-        });
-        logger.info('Innertube YouTube client created successfully.');
+    if (process.platform === 'win32') {
+        logger.info('Running on Windows: Utilizing youtube-dl-exec default executable.');
+        youtubedl = youtubedlModule;
+        return youtubedl;
     }
-    return youtubeClient;
-}
 
-// YouTube Video ID extractor regex helper
-function getYouTubeVideoId(url) {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
+    // On Linux/Hostinger, check and run standalone compiled self-contained yt-dlp binary (needs 0% Python!)
+    const binDir = path.join(__dirname, '../bin');
+    const binaryPath = path.join(binDir, 'yt-dlp');
+
+    if (fs.existsSync(binaryPath)) {
+        logger.info(`Standalone self-contained yt-dlp binary found at: ${binaryPath}`);
+        youtubedl = youtubedlModule.create(binaryPath);
+        return youtubedl;
+    }
+
+    logger.info('Hostinger Environment: Standalone self-contained Linux yt-dlp binary missing. Initiating automatic download...');
+    if (!fs.existsSync(binDir)) {
+        fs.mkdirSync(binDir, { recursive: true });
+    }
+
+    await new Promise((resolve, reject) => {
+        const file = fs.createWriteStream(binaryPath);
+        
+        function download(url) {
+            https.get(url, (response) => {
+                if (response.statusCode === 302 || response.statusCode === 301) {
+                    download(response.headers.location);
+                    return;
+                }
+                
+                if (response.statusCode !== 200) {
+                    reject(new Error(`Failed to download binary: HTTP ${response.statusCode}`));
+                    return;
+                }
+
+                response.pipe(file);
+                
+                file.on('finish', () => {
+                    file.close();
+                    try {
+                        fs.chmodSync(binaryPath, 0o755);
+                        logger.info('Standalone Linux yt-dlp binary downloaded and permissions set to 0755 successfully!');
+                        resolve();
+                    } catch (chmodErr) {
+                        reject(new Error(`Failed to set permissions: ${chmodErr.message}`));
+                    }
+                });
+            }).on('error', (err) => {
+                fs.unlink(binaryPath, () => {});
+                reject(err);
+            });
+        }
+
+        download('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp');
+    });
+
+    youtubedl = youtubedlModule.create(binaryPath);
+    return youtubedl;
 }
 
 // Tell fluent-ffmpeg to use the locally installed static binary
@@ -122,36 +138,32 @@ class StreamService extends EventEmitter {
         const sessionId = this.streamSessionId;
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
         
-        // Extract the video ID from the URL
-        const videoId = getYouTubeVideoId(this.currentUrl);
-        if (!videoId) {
-            logger.error(`Invalid YouTube URL format: ${this.currentUrl}`);
-            this._handleProcessClose();
-            return;
-        }
-
-        let webStream = null;
-        let directUrl = null;
+        let directUrl;
         try {
-            logger.info('Fetching stream source via youtubei.js (100% Pure JavaScript)...');
-            const client = await getYoutubeClient();
-            const videoInfo = await client.getInfo(videoId);
+            // Lazy-load and build our standalone self-contained yt-dlp binary
+            const launcher = await getYoutubeDl();
 
-            // 1. Check if the video is a Live or Post-Live HLS stream
-            if (videoInfo.streaming_data && videoInfo.streaming_data.hls_manifest_url) {
-                directUrl = videoInfo.streaming_data.hls_manifest_url;
-                logger.info(`Detected LIVE YouTube stream. Utilizing HLS manifest URL directly: ${directUrl}`);
-            } else {
-                // 2. Otherwise, download it as a standard static audio stream
-                logger.info('Detected standard YouTube video. Downloading audio format...');
-                webStream = await videoInfo.download({
-                    type: 'audio',
-                    quality: 'best'
-                });
+            // Set standard extraction options
+            const ytDlpOptions = {
+                f: 'bestaudio/best',
+                getUrl: true,
+                noPlaylist: true,
+                geoBypass: true,
+                socketTimeout: 15,
+                ignoreConfig: true
+            };
+
+            const cookiesPath = path.join(__dirname, '../cookies.txt');
+            if (fs.existsSync(cookiesPath)) {
+                ytDlpOptions.cookies = cookiesPath;
+                logger.info('Detected cookies.txt in project root. Applying cookies to standalone yt-dlp.');
             }
+
+            logger.info('Extracting direct media stream URL using standalone yt-dlp...');
+            directUrl = await launcher(this.currentUrl, ytDlpOptions);
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
-            logger.warn(`youtubei.js error fetching URL: ${err.message}`);
+            logger.warn(`yt-dlp error fetching URL: ${err.message}`);
             this._handleProcessClose();
             return;
         }
@@ -159,19 +171,16 @@ class StreamService extends EventEmitter {
         // In case stopStream or startStream was called while we were awaiting the URL
         if (sessionId !== this.streamSessionId || !this.shouldRetry) {
             logger.info('Aborting process launch: Stream session changed.');
-            if (webStream) {
-                try { webStream.cancel(); } catch (e) {}
-            }
             return;
         }
 
-        logger.info('Successfully extracted direct audio stream.');
+        logger.info('Successfully extracted direct stream URL.');
 
-        // Convert modern Web-standard ReadableStream to standard Node.js Readable stream if standard video
-        const inputSource = directUrl || Readable.fromWeb(webStream);
-
-        // Create fluent-ffmpeg command reading from the Node.js readable stream or HLS URL
-        this.ffmpegCommand = ffmpeg(inputSource)
+        // Create fluent-ffmpeg command reading from the direct URL
+        this.ffmpegCommand = ffmpeg(directUrl)
+            // -re tells ffmpeg to read input at native frame rate. 
+            // This is CRITICAL so non-live videos don't finish transcoding in 2 seconds and stop the stream.
+            .inputOptions('-re') 
             .audioCodec('libmp3lame')
             .audioBitrate('16k')
             .format('mp3')
