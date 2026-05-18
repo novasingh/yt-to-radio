@@ -92,13 +92,6 @@ app.get('/live', (req, res) => {
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Range');
 
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-
     // Safe protection against uninitialized streamService during async boot
     if (!streamService) {
         logger.warn('Streaming service is not yet initialized.');
@@ -109,6 +102,14 @@ app.get('/live', (req, res) => {
         logger.info('Listener rejected, stream is currently offline.');
         return res.status(503).send('Stream Offline');
     }
+
+    // Set streaming headers ONLY when the stream is verified to be online
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
 
     // Add listener to the stream service
     try {
