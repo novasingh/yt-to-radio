@@ -26,6 +26,44 @@ try {
     logger.error(`Failed to set static FFmpeg path: ${ffmpegErr.message}`);
 }
 
+// Helper to search and find the cookies.txt file across multiple locations
+function getCookiesPath() {
+    const paths = [
+        path.join(__dirname, '../cookies.txt'),
+        path.join(__dirname, 'cookies.txt'),
+        path.join(process.cwd(), 'cookies.txt')
+    ];
+    for (const p of paths) {
+        if (fs.existsSync(p)) {
+            return p;
+        }
+    }
+    return null;
+}
+
+// Convert Netscape cookies.txt file content into standard Cookie header string
+function getCookieHeaderString(cookiesPath) {
+    if (!cookiesPath || !fs.existsSync(cookiesPath)) return '';
+    try {
+        const lines = fs.readFileSync(cookiesPath, 'utf8').split('\n');
+        const cookies = [];
+        for (const line of lines) {
+            const cleanLine = line.trim();
+            if (!cleanLine || cleanLine.startsWith('#')) continue;
+            const parts = cleanLine.split('\t');
+            if (parts.length >= 7) {
+                const name = parts[5];
+                const value = parts[6];
+                cookies.push(`${name}=${value}`);
+            }
+        }
+        return cookies.join('; ');
+    } catch (err) {
+        logger.error(`Error parsing cookies.txt: ${err.message}`);
+        return '';
+    }
+}
+
 // Helper to extract the 11-character video ID from standard YouTube links
 function extractVideoId(url) {
     if (!url) return null;
@@ -95,17 +133,25 @@ class StreamService extends EventEmitter {
             logger.info('Initializing Innertube YouTube.js client...');
             const { Innertube } = require('youtubei.js');
             
-            // Initialize Innertube anonymously to prevent WEB cookie mismatch errors with the ANDROID player context
-            const client = await Innertube.create();
+            const cookiesPath = getCookiesPath();
+            const config = {};
+            
+            if (cookiesPath) {
+                const cookieString = getCookieHeaderString(cookiesPath);
+                if (cookieString) {
+                    config.cookie = cookieString;
+                    logger.info(`Detected cookies.txt at: ${cookiesPath}. Applied session cookies successfully to YouTube.js.`);
+                }
+            } else {
+                logger.warn('WARNING: cookies.txt was NOT found on this server! YouTube.js requests will be unauthenticated.');
+            }
+
+            const client = await Innertube.create(config);
 
             if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
-            logger.info(`Executing direct /player action with ANDROID client context for video ID: ${videoId}...`);
-            const playerResponse = await client.actions.execute('/player', {
-                videoId,
-                client: 'ANDROID',
-                parse: true
-            });
+            logger.info(`Executing client.getBasicInfo() with WEB client context for video ID: ${videoId}...`);
+            const playerResponse = await client.getBasicInfo(videoId, 'WEB');
             
             if (sessionId !== this.streamSessionId || !this.shouldRetry) return;
 
