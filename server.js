@@ -66,6 +66,7 @@ let apiRoutes;
 let authRoutes;
 
 // Safe asynchronous service bootstrap
+// Safe asynchronous service bootstrap
 setImmediate(() => {
     try {
         logger.info('[STARTUP] Initializing database layer non-blockingly...');
@@ -81,109 +82,110 @@ setImmediate(() => {
         app.use('/api', apiRoutes);
         app.use('/auth', authRoutes);
         
+        // ==========================================
+        // 5. RESILIENT `/live` STREAMING ROUTE
+        // ==========================================
+        app.get('/live', (req, res) => {
+            // Explicitly allow Cross-Origin Resource Sharing (CORS) for high compatibility across clients and audio players
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Range');
+
+            // Safe protection against uninitialized streamService during async boot
+            if (!streamService) {
+                logger.warn('Streaming service is not yet initialized.');
+                return res.status(503).json({ error: 'Streaming service starting up. Please try again shortly.' });
+            }
+
+            if (!streamService.isOnline) {
+                logger.info('Listener rejected, stream is currently offline.');
+                return res.status(503).send('Stream Offline');
+            }
+
+            // Set streaming headers ONLY when the stream is verified to be online
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Transfer-Encoding', 'chunked');
+            res.setHeader('Connection', 'keep-alive');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
+
+            // Add listener to the stream service
+            try {
+                streamService.addListener(res);
+            } catch (streamErr) {
+                logger.error(`Failed to bind listener response: ${streamErr.message}`);
+                res.status(500).send('Streaming Connection Failure');
+            }
+        });
+
+        // ==========================================
+        // 6. HEALTH & STATUS ENDPOINT (PRODUCTION SAFE)
+        // Always responds immediately, providing debug metrics even if background services are failing
+        // ==========================================
+        app.get('/api/status', (req, res) => {
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Content-Type', 'application/json');
+            
+            const statusData = {
+                online: false,
+                url: null,
+                listenerCount: 0,
+                diagnostics: {
+                    nodeVersion: process.version,
+                    platform: process.platform,
+                    serverBound: true,
+                    databaseHealthy: false,
+                    streamingHealthy: false
+                }
+            };
+
+            try {
+                if (db) {
+                    statusData.diagnostics.databaseHealthy = true;
+                }
+                if (streamService) {
+                    const streamStatus = streamService.getStatus();
+                    statusData.online = streamStatus.online;
+                    statusData.url = streamStatus.url;
+                    statusData.listenerCount = streamStatus.listenerCount;
+                    statusData.diagnostics.streamingHealthy = true;
+                }
+            } catch (e) {
+                statusData.diagnostics.error = e.message;
+            }
+
+            res.status(200).json(statusData);
+        });
+
+        // ==========================================
+        // 7. DEFAULT CATCH-ALL ROUTE (INDEX FALLBACK)
+        // Must be registered after all routers to prevent premature HTML fallback matching
+        // ==========================================
+        app.get('*', (req, res) => {
+            const indexPath = path.join(__dirname, 'public/index.html');
+            if (fs.existsSync(indexPath)) {
+                res.sendFile(indexPath);
+            } else {
+                res.status(404).send('Web Frontend under construction. Please check back later.');
+            }
+        });
+
+        // ==========================================
+        // 8. GLOBAL FALLBACK ERROR MIDDLEWARE
+        // ==========================================
+        app.use((err, req, res, next) => {
+            logger.error(`Unhandled request error: ${err.message}`);
+            res.status(500).json({
+                error: 'Internal Server Error',
+                message: process.env.NODE_ENV === 'development' ? err.message : 'An unexpected error occurred.'
+            });
+        });
+        
         logger.info('[STARTUP] All background modules loaded successfully.');
     } catch (bootstrapErr) {
         logger.error(`[STARTUP] Degraded Startup: Modules failed to load asynchronously: ${bootstrapErr.message}`);
     }
-});
-
-// ==========================================
-// 5. RESILIENT `/live` STREAMING ROUTE
-// ==========================================
-app.get('/live', (req, res) => {
-    // Explicitly allow Cross-Origin Resource Sharing (CORS) for high compatibility across clients and audio players
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Range');
-
-    // Safe protection against uninitialized streamService during async boot
-    if (!streamService) {
-        logger.warn('Streaming service is not yet initialized.');
-        return res.status(503).json({ error: 'Streaming service starting up. Please try again shortly.' });
-    }
-
-    if (!streamService.isOnline) {
-        logger.info('Listener rejected, stream is currently offline.');
-        return res.status(503).send('Stream Offline');
-    }
-
-    // Set streaming headers ONLY when the stream is verified to be online
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-
-    // Add listener to the stream service
-    try {
-        streamService.addListener(res);
-    } catch (streamErr) {
-        logger.error(`Failed to bind listener response: ${streamErr.message}`);
-        res.status(500).send('Streaming Connection Failure');
-    }
-});
-
-// ==========================================
-// 6. HEALTH & STATUS ENDPOINT (PRODUCTION SAFE)
-// Always responds immediately, providing debug metrics even if background services are failing
-// ==========================================
-app.get('/api/status', (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', 'application/json');
-    
-    const statusData = {
-        online: false,
-        url: null,
-        listenerCount: 0,
-        diagnostics: {
-            nodeVersion: process.version,
-            platform: process.platform,
-            serverBound: true,
-            databaseHealthy: false,
-            streamingHealthy: false
-        }
-    };
-
-    try {
-        if (db) {
-            statusData.diagnostics.databaseHealthy = true;
-        }
-        if (streamService) {
-            const streamStatus = streamService.getStatus();
-            statusData.online = streamStatus.online;
-            statusData.url = streamStatus.url;
-            statusData.listenerCount = streamStatus.listenerCount;
-            statusData.diagnostics.streamingHealthy = true;
-        }
-    } catch (e) {
-        statusData.diagnostics.error = e.message;
-    }
-
-    res.status(200).json(statusData);
-});
-
-// ==========================================
-// 7. DEFAULT CATCH-ALL ROUTE (INDEX FALLBACK)
-// ==========================================
-app.get('*', (req, res) => {
-    const indexPath = path.join(__dirname, 'public/index.html');
-    if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-    } else {
-        res.status(404).send('Web Frontend under construction. Please check back later.');
-    }
-});
-
-// ==========================================
-// 8. GLOBAL FALLBACK ERROR MIDDLEWARE
-// ==========================================
-app.use((err, req, res, next) => {
-    logger.error(`Unhandled request error: ${err.message}`);
-    res.status(500).json({
-        error: 'Internal Server Error',
-        message: process.env.NODE_ENV === 'development' ? err.message : 'An unexpected error occurred.'
-    });
 });
 
 // ==========================================
