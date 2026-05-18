@@ -130,17 +130,25 @@ class StreamService extends EventEmitter {
             return;
         }
 
-        let webStream;
+        let webStream = null;
+        let directUrl = null;
         try {
             logger.info('Fetching stream source via youtubei.js (100% Pure JavaScript)...');
             const client = await getYoutubeClient();
             const videoInfo = await client.getInfo(videoId);
 
-            // Fetch the best audio stream format natively
-            webStream = await videoInfo.download({
-                type: 'audio',
-                quality: 'best'
-            });
+            // 1. Check if the video is a Live or Post-Live HLS stream
+            if (videoInfo.streaming_data && videoInfo.streaming_data.hls_manifest_url) {
+                directUrl = videoInfo.streaming_data.hls_manifest_url;
+                logger.info(`Detected LIVE YouTube stream. Utilizing HLS manifest URL directly: ${directUrl}`);
+            } else {
+                // 2. Otherwise, download it as a standard static audio stream
+                logger.info('Detected standard YouTube video. Downloading audio format...');
+                webStream = await videoInfo.download({
+                    type: 'audio',
+                    quality: 'best'
+                });
+            }
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
             logger.warn(`youtubei.js error fetching URL: ${err.message}`);
@@ -159,11 +167,11 @@ class StreamService extends EventEmitter {
 
         logger.info('Successfully extracted direct audio stream.');
 
-        // Convert modern Web-standard ReadableStream to a standard Node.js Readable stream
-        const nodeStream = Readable.fromWeb(webStream);
+        // Convert modern Web-standard ReadableStream to standard Node.js Readable stream if standard video
+        const inputSource = directUrl || Readable.fromWeb(webStream);
 
-        // Create fluent-ffmpeg command reading from the Node.js readable stream
-        this.ffmpegCommand = ffmpeg(nodeStream)
+        // Create fluent-ffmpeg command reading from the Node.js readable stream or HLS URL
+        this.ffmpegCommand = ffmpeg(inputSource)
             .audioCodec('libmp3lame')
             .audioBitrate('16k')
             .format('mp3')
