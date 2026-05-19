@@ -1,5 +1,5 @@
-# Use Node 20 Debian-slim image for max compatibility with native binaries and custom runtimes
-FROM node:20-slim
+# Use Node 22 Debian-slim image for max compatibility with native binaries and custom runtimes
+FROM node:22-slim
 
 # Install system dependencies:
 # 1. python3: Strictly required by yt-dlp to run YouTube extraction scripts

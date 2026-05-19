@@ -25,8 +25,8 @@ const logger = require('./utils/logger');
 // Concurrency auto-scaling constants
 const MIN_WORKERS = parseInt(process.env.WEB_MIN_WORKERS || '1', 10); // Always keep minimum workers for high availability and failover
 const MAX_WORKERS = parseInt(process.env.WEB_MAX_WORKERS || '', 10) || Math.max(os.cpus().length || 4, 4); // Scale up to configured limit or CPU core count
-const SCALE_UP_THRESHOLD = 500; // Spawn a new worker if average listeners per worker exceed 500
-const SCALE_DOWN_THRESHOLD = 200; // Drains a worker if average listeners per worker drop below 200
+const SCALE_UP_THRESHOLD = 1500; // Spawn a new worker if average listeners per worker exceed 1500
+const SCALE_DOWN_THRESHOLD = 500; // Drains a worker if average listeners per worker drop below 500
 
 if (cluster.isMaster) {
     logger.info(`=== MASTER PROCESS ${process.pid} STARTING UP ===`);
@@ -55,7 +55,7 @@ if (cluster.isMaster) {
     const updateGlobalStatus = () => {
         let totalListeners = 0;
         const activeWorkers = Object.values(cluster.workers).filter(w => !w.isShuttingDown);
-        
+
         activeWorkers.forEach(w => {
             totalListeners += w.localListenerCount || 0;
         });
@@ -70,7 +70,7 @@ if (cluster.isMaster) {
         activeWorkers.forEach(w => {
             try {
                 w.send({ type: 'status-change', status });
-            } catch (e) {}
+            } catch (e) { }
         });
     };
 
@@ -83,7 +83,7 @@ if (cluster.isMaster) {
     cluster.on('fork', (worker) => {
         worker.localListenerCount = 0;
         worker.isShuttingDown = false;
-        
+
         worker.on('message', (msg) => {
             if (msg.type === 'start-stream') {
                 streamService.startStream(msg.url);
@@ -115,7 +115,7 @@ if (cluster.isMaster) {
                 if (w && !w.isShuttingDown) {
                     w.send({ type: 'audio-chunk', data: chunk });
                 }
-            } catch (e) {}
+            } catch (e) { }
         }
     });
 
@@ -135,24 +135,24 @@ if (cluster.isMaster) {
         const activeWorkers = Object.values(cluster.workers).filter(w => !w.isShuttingDown);
         const totalWorkersCount = activeWorkers.length;
         let totalListeners = 0;
-        
+
         activeWorkers.forEach(w => {
             totalListeners += w.localListenerCount || 0;
         });
 
         const avgListeners = totalWorkersCount > 0 ? (totalListeners / totalWorkersCount) : 0;
-        
+
         // Log System Health Diagnostics
         const systemLoad = os.loadavg();
         const freeMem = (os.freemem() / (1024 * 1024)).toFixed(0);
         const totalMem = (os.totalmem() / (1024 * 1024)).toFixed(0);
         const masterHeapUsed = (process.memoryUsage().heapUsed / (1024 * 1024)).toFixed(1);
-        
+
         logger.info(`[HEALTH MONITOR] Master Heap RAM: ${masterHeapUsed}MB | System Free RAM: ${freeMem}MB/${totalMem}MB | CPU Load (5m): ${systemLoad[1].toFixed(2)} | Active Workers: ${totalWorkersCount} | Global Listeners: ${totalListeners}`);
 
         // Query workers for internal memory diagnostics
         activeWorkers.forEach(w => {
-            try { w.send({ type: 'query-diagnostics' }); } catch (e) {}
+            try { w.send({ type: 'query-diagnostics' }); } catch (e) { }
         });
 
         const now = Date.now();
@@ -234,15 +234,15 @@ if (cluster.isMaster) {
                     rss,
                     listeners: streamService ? streamService.listeners.size : 0
                 });
-            } catch (e) {}
+            } catch (e) { }
         } else if (msg.type === 'graceful-shutdown') {
             logger.info(`[WORKER ${process.pid}] Graceful shutdown signal received from Master. Draining connections...`);
-            
+
             // Close all active SSE clients immediately so they reconnect to healthy active workers
             for (const client of sseClients) {
                 try {
                     client.end();
-                } catch (e) {}
+                } catch (e) { }
             }
             sseClients.clear();
 
@@ -257,7 +257,7 @@ if (cluster.isMaster) {
                 logger.info(`[WORKER ${process.pid}] Forced drain timeout reached. Terminating remaining streaming sockets.`);
                 if (streamService) {
                     for (const res of streamService.listeners) {
-                        try { res.end(); } catch (e) {}
+                        try { res.end(); } catch (e) { }
                     }
                 }
                 process.exit(0);
@@ -270,21 +270,21 @@ if (cluster.isMaster) {
         try {
             logger.info(`[WORKER ${process.pid}] Loading database modules...`);
             db = require('./services/db');
-            
+
             logger.info(`[WORKER ${process.pid}] Connecting transparent streaming bridge...`);
             streamService = require('./services/streamService');
 
             let lastState = { online: false, url: null, listenerCount: 0 };
             streamService.on('status-change', () => {
                 const status = streamService.getStatus();
-                const currentState = { 
-                    online: status.online, 
-                    url: status.url, 
-                    listenerCount: status.listenerCount 
+                const currentState = {
+                    online: status.online,
+                    url: status.url,
+                    listenerCount: status.listenerCount
                 };
                 if (
-                    currentState.online !== lastState.online || 
-                    currentState.url !== lastState.url || 
+                    currentState.online !== lastState.online ||
+                    currentState.url !== lastState.url ||
                     currentState.listenerCount !== lastState.listenerCount
                 ) {
                     lastState = currentState;
@@ -292,7 +292,7 @@ if (cluster.isMaster) {
                     for (const client of sseClients) {
                         try {
                             client.write(`data: ${data}\n\n`);
-                        } catch (err) {}
+                        } catch (err) { }
                     }
                 }
             });
@@ -345,7 +345,7 @@ if (cluster.isMaster) {
     app.get('/api/status', (req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Content-Type', 'application/json');
-        
+
         const statusData = {
             online: false,
             url: null,
