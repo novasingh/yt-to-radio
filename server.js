@@ -35,10 +35,22 @@ if (cluster.isMaster) {
     // Master process lazy-loads the streaming service singleton
     const streamService = require('./services/streamService');
 
-    // Auto-start default YouTube live stream on boot to ensure immediate availability
-    const defaultUrl = 'https://www.youtube.com/watch?v=8gBkM8-bRz8';
-    logger.info(`[STARTUP] Auto-starting default live stream: ${defaultUrl}`);
-    streamService.startStream(defaultUrl);
+    // Auto-resume saved stream from database on boot, or fall back to default YouTube live stream
+    const db = require('./services/db');
+    db.get(`SELECT * FROM active_stream WHERE id = 1`, [], (err, row) => {
+        if (err) {
+            logger.error(`[STARTUP] Failed to query active stream database: ${err.message}`);
+        }
+
+        if (row && row.active === 1 && row.url) {
+            logger.info(`[STARTUP] Auto-resuming saved active stream from database: ${row.url}`);
+            streamService.startStream(row.url);
+        } else {
+            const defaultUrl = 'https://www.youtube.com/watch?v=8gBkM8-bRz8';
+            logger.info(`[STARTUP] No saved active stream found. Auto-starting default live stream: ${defaultUrl}`);
+            streamService.startStream(defaultUrl);
+        }
+    });
 
     const updateGlobalStatus = () => {
         let totalListeners = 0;

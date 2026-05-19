@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const cluster = require('cluster');
 const logger = require('../utils/logger');
+const db = require('./db');
 
 // Tell fluent-ffmpeg to use the locally installed static binary, unless a system ffmpeg is available
 try {
@@ -99,6 +100,19 @@ class StreamService extends EventEmitter {
             this.shouldRetry = true;
             this._startWatchdog();
             this._launchProcesses();
+
+            // Persist the active streaming state in SQLite
+            db.run(
+                `INSERT OR REPLACE INTO active_stream (id, url, active, updated_at) VALUES (1, ?, 1, datetime('now'))`,
+                [url],
+                (err) => {
+                    if (err) {
+                        logger.error(`Failed to save active stream URL to database: ${err.message}`);
+                    } else {
+                        logger.info(`Successfully saved active stream URL to database: ${url}`);
+                    }
+                }
+            );
         } else {
             process.send({ type: 'start-stream', url });
         }
@@ -278,6 +292,19 @@ class StreamService extends EventEmitter {
             clearInterval(this.watchdogInterval);
             if (clearUrl) {
                 this.currentUrl = null;
+
+                // Deactivate the active streaming state in SQLite
+                db.run(
+                    `INSERT OR REPLACE INTO active_stream (id, url, active, updated_at) VALUES (1, '', 0, datetime('now'))`,
+                    [],
+                    (err) => {
+                        if (err) {
+                            logger.error(`Failed to deactivate stream in database: ${err.message}`);
+                        } else {
+                            logger.info(`Deactivated active stream in database successfully.`);
+                        }
+                    }
+                );
             }
             this._cleanupProcesses();
             this.isOnline = false;

@@ -135,6 +135,17 @@ function initDb() {
                 ensureSuperAdmin();
             }
         });
+
+        db.run(`CREATE TABLE IF NOT EXISTS active_stream (
+            id INTEGER PRIMARY KEY DEFAULT 1,
+            url TEXT NOT NULL,
+            active INTEGER DEFAULT 1,
+            updated_at TEXT NOT NULL
+        )`, (err) => {
+            if (err) {
+                logger.error(`Error creating active_stream table: ${err.message}`);
+            }
+        });
     });
 }
 
