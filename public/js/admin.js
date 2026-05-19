@@ -13,6 +13,7 @@ const urlInputGroup = document.getElementById('urlInputGroup');
 const adminStatusBadge = document.getElementById('adminStatusBadge');
 const adminListeners = document.getElementById('adminListeners');
 const currentUrlSpan = document.getElementById('currentUrl');
+const adminCurrentTitle = document.getElementById('adminCurrentTitle');
 const streamMsg = document.getElementById('streamMsg');
 
 // Tab logic
@@ -112,6 +113,9 @@ function handleStreamStatusUpdate(data) {
         adminListeners.textContent = `Listeners: ${data.listenerCount}`;
     }
     currentUrlSpan.textContent = data.url || 'None';
+    if (adminCurrentTitle) {
+        adminCurrentTitle.textContent = data.title || 'None';
+    }
     
     // Hide/Show inputs and buttons based on URL state (started vs stopped)
     if (data.url) {

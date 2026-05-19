@@ -22,7 +22,7 @@ function handleStatusUpdate(data) {
         statusBadge.textContent = 'LIVE';
         statusBadge.className = 'badge live';
         if (trackTitle) {
-            trackTitle.textContent = data.title || 'Live Radio Stream';
+            trackTitle.textContent = 'Live Radio Stream';
             trackTitle.style.color = 'var(--text-main)';
         }
         // Auto reconnect if we were playing but audio stopped
