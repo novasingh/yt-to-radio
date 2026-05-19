@@ -47,11 +47,15 @@ try {
 
 // Helper to search and find the cookies.txt file across multiple locations
 function getCookiesPath() {
-    const paths = [
+    const paths = [];
+    if (process.env.COOKIES_PATH) {
+        paths.push(process.env.COOKIES_PATH);
+    }
+    paths.push(
         path.join(__dirname, '../cookies.txt'),
         path.join(__dirname, 'cookies.txt'),
         path.join(process.cwd(), 'cookies.txt')
-    ];
+    );
     for (const p of paths) {
         if (fs.existsSync(p)) {
             return p;
