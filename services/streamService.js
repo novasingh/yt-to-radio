@@ -77,7 +77,7 @@ class StreamService extends EventEmitter {
         this.streamSessionId = 0;
         this.burstBuffer = [];
         this.currentBurstSize = 0;
-        this.maxBurstSize = 128 * 1024; // 128KB memory cache for instant playback buffering
+        this.maxBurstSize = 64 * 1024; // 64KB memory cache for instant playback buffering
 
         if (cluster.isMaster) {
             this.ffmpegCommand = null;
@@ -89,12 +89,12 @@ class StreamService extends EventEmitter {
             this.activeExtractionProcess = null; // Track active extraction child_process
         } else {
             this.cachedStatus = { online: false, url: null, listenerCount: 0 };
-            
+
             // Worker process handles incoming master IPC chunks and status changes
             process.on('message', (msg) => {
                 if (msg.type === 'audio-chunk') {
                     const chunk = Buffer.isBuffer(msg.data) ? msg.data : Buffer.from(msg.data);
-                    
+
                     // Manage worker-side burst buffer for fast playbacks with highly efficient O(1) tracking
                     this.burstBuffer.push(chunk);
                     this.currentBurstSize += chunk.length;
@@ -191,7 +191,7 @@ class StreamService extends EventEmitter {
         if (this.activeExtractionProcess) {
             try {
                 this.activeExtractionProcess.kill('SIGKILL');
-            } catch (e) {}
+            } catch (e) { }
             this.activeExtractionProcess = null;
         }
 
@@ -202,8 +202,8 @@ class StreamService extends EventEmitter {
             const dlpPath = youtubedl.constants.YOUTUBE_DL_PATH;
 
             const args = [
-                this.currentUrl, 
-                '--get-url', 
+                this.currentUrl,
+                '--get-url',
                 '--format', 'bestaudio/best',
                 '--no-playlist',
                 '--geo-bypass',
@@ -365,7 +365,7 @@ class StreamService extends EventEmitter {
         if (this.activeExtractionProcess) {
             try {
                 this.activeExtractionProcess.kill('SIGKILL');
-            } catch (e) {}
+            } catch (e) { }
             this.activeExtractionProcess = null;
         }
         if (this.ffmpegCommand) {
@@ -412,7 +412,7 @@ class StreamService extends EventEmitter {
             this.emit('status-change');
 
             for (const res of this.listeners) {
-                try { res.end(); } catch (e) {}
+                try { res.end(); } catch (e) { }
             }
             this.listeners.clear();
         } else {
@@ -423,7 +423,7 @@ class StreamService extends EventEmitter {
     addListener(res) {
         this.listeners.add(res);
         logger.info(`Listener added. Total local listeners: ${this.listeners.size}`);
-        
+
         if (cluster.isWorker) {
             process.send({ type: 'listener-update', count: this.listeners.size });
         } else {
