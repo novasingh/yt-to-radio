@@ -226,6 +226,7 @@ class StreamService extends EventEmitter {
     addListener(res) {
         this.listeners.add(res);
         logger.info(`Listener added. Total listeners: ${this.listeners.size}`);
+        this.emit('status-change');
 
         // Burst on connect: send the last 64KB immediately so browser buffers instantly
         if (this.burstBuffer.length > 0) {
@@ -244,8 +245,11 @@ class StreamService extends EventEmitter {
     }
 
     removeListener(res) {
-        this.listeners.delete(res);
-        logger.info(`Listener removed. Total listeners: ${this.listeners.size}`);
+        const deleted = this.listeners.delete(res);
+        if (deleted) {
+            logger.info(`Listener removed. Total listeners: ${this.listeners.size}`);
+            this.emit('status-change');
+        }
     }
 
     getStatus() {

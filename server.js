@@ -64,6 +64,7 @@ let db;
 let streamService;
 let apiRoutes;
 let authRoutes;
+const sseClients = new Set();
 
 // Safe asynchronous service bootstrap
 setImmediate(() => {
@@ -73,6 +74,37 @@ setImmediate(() => {
         
         logger.info('[STARTUP] Initializing streaming services...');
         streamService = require('./services/streamService');
+
+        // Broadcast status-change to all connected SSE clients
+        let lastState = { online: false, url: null, listenerCount: 0 };
+        streamService.on('status-change', () => {
+            const status = streamService.getStatus();
+            const currentState = { 
+                online: status.online, 
+                url: status.url, 
+                listenerCount: status.listenerCount 
+            };
+            if (
+                currentState.online !== lastState.online || 
+                currentState.url !== lastState.url || 
+                currentState.listenerCount !== lastState.listenerCount
+            ) {
+                lastState = currentState;
+                const data = JSON.stringify({
+                    online: status.online,
+                    url: status.url,
+                    listenerCount: status.listenerCount
+                });
+                logger.info(`Broadcasting SSE state update: online=${status.online}, url=${status.url}, listeners=${status.listenerCount}`);
+                for (const client of sseClients) {
+                    try {
+                        client.write(`data: ${data}\n\n`);
+                    } catch (err) {
+                        // Resilient error catch if connection is broken
+                    }
+                }
+            }
+        });
         
         logger.info('[STARTUP] Registering backend application routes...');
         apiRoutes = require('./routes/api');
@@ -161,6 +193,43 @@ app.get('/api/status', (req, res) => {
     }
 
     res.status(200).json(statusData);
+});
+
+// ==========================================
+// 6.1 SERVER-SENT EVENTS (SSE) ENDPOINT
+// Broadcasts real-time stream status transitions instantly
+// ==========================================
+app.get('/api/status/events', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    res.flushHeaders();
+
+    // Send the current status immediately to ensure the client is synchronized upon connection
+    let initialData = { online: false, url: null, listenerCount: 0 };
+    if (streamService) {
+        const status = streamService.getStatus();
+        initialData = {
+            online: status.online,
+            url: status.url,
+            listenerCount: status.listenerCount
+        };
+    }
+    res.write(`data: ${JSON.stringify(initialData)}\n\n`);
+
+    sseClients.add(res);
+
+    const keepAlive = setInterval(() => {
+        res.write(': keep-alive\n\n');
+    }, 30000);
+
+    req.on('close', () => {
+        clearInterval(keepAlive);
+        sseClients.delete(res);
+    });
 });
 
 // ==========================================

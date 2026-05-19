@@ -12,31 +12,56 @@ let isPlaying = false;
 let isIntentionallyStopped = true;
 let statusInterval;
 
-// Fetch stream status
-async function updateStatus() {
+function handleStatusUpdate(data) {
+    if (data.listenerCount !== undefined) {
+        listenersCount.textContent = `Listeners: ${data.listenerCount}`;
+    }
+    
+    if (data.online) {
+        statusBadge.textContent = 'LIVE';
+        statusBadge.className = 'badge live';
+        // Auto reconnect if we were playing but audio stopped
+        if (!isIntentionallyStopped && !isPlaying && audioPlayer.paused) {
+            startPlayback();
+        }
+    } else {
+        statusBadge.textContent = 'OFFLINE';
+        statusBadge.className = 'badge';
+        if (isPlaying) {
+            stopPlaybackUI();
+        }
+    }
+}
+
+// Fetch initial status immediately on load
+async function checkInitialStatus() {
     try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        
-        listenersCount.textContent = `Listeners: ${data.listenerCount}`;
-        
-        if (data.online) {
-            statusBadge.textContent = 'LIVE';
-            statusBadge.className = 'badge live';
-            // Auto reconnect if we were playing but audio stopped
-            if (!isIntentionallyStopped && !isPlaying && audioPlayer.paused) {
-                startPlayback();
-            }
-        } else {
-            statusBadge.textContent = 'OFFLINE';
-            statusBadge.className = 'badge';
-            if (isPlaying) {
-                stopPlaybackUI();
-            }
-        }
+        handleStatusUpdate(data);
     } catch (err) {
-        console.error('Failed to fetch status:', err);
+        console.error('Failed to fetch initial status:', err);
     }
+}
+
+// Connect to Server-Sent Events for real-time status changes
+function connectSSE() {
+    const eventSource = new EventSource('/api/status/events');
+
+    eventSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleStatusUpdate(data);
+        } catch (err) {
+            console.error('Failed to parse SSE event data:', err);
+        }
+    };
+
+    eventSource.onerror = (err) => {
+        console.error('SSE connection lost. Reconnecting in 5 seconds...', err);
+        eventSource.close();
+        setTimeout(connectSSE, 5000);
+    };
 }
 
 function startPlayback() {
@@ -124,8 +149,6 @@ playBtn.addEventListener('click', () => {
     }
 });
 
-// Delay the first status API call by 5 seconds to allow the server's asynchronous bootstrap to complete cleanly
-setTimeout(() => {
-    updateStatus();
-    statusInterval = setInterval(updateStatus, 5000);
-}, 5000);
+// Check status on load and connect Server-Sent Events channel
+checkInitialStatus();
+connectSSE();

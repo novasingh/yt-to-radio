@@ -107,37 +107,63 @@ async function apiCall(endpoint, method = 'GET', body = null) {
     return res.json();
 }
 
-async function updateStreamStatus() {
+function handleStreamStatusUpdate(data) {
+    if (data.listenerCount !== undefined) {
+        adminListeners.textContent = `Listeners: ${data.listenerCount}`;
+    }
+    currentUrlSpan.textContent = data.url || 'None';
+    
+    // Hide/Show inputs and buttons based on URL state (started vs stopped)
+    if (data.url) {
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'block';
+        urlInputGroup.style.display = 'none';
+    } else {
+        startBtn.style.display = 'block';
+        stopBtn.style.display = 'none';
+        urlInputGroup.style.display = 'block';
+        startBtn.disabled = false;
+        startBtn.textContent = 'START STREAM';
+    }
+
+    if (data.online) {
+        adminStatusBadge.textContent = 'ACTIVE';
+        adminStatusBadge.className = 'badge live';
+    } else {
+        adminStatusBadge.textContent = 'OFFLINE';
+        adminStatusBadge.className = 'badge';
+    }
+}
+
+// Fetch initial status immediately on load
+async function checkInitialStreamStatus() {
     try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        
-        adminListeners.textContent = `Listeners: ${data.listenerCount}`;
-        currentUrlSpan.textContent = data.url || 'None';
-        
-        // Hide/Show inputs and buttons based on URL state (started vs stopped)
-        if (data.url) {
-            startBtn.style.display = 'none';
-            stopBtn.style.display = 'block';
-            urlInputGroup.style.display = 'none';
-        } else {
-            startBtn.style.display = 'block';
-            stopBtn.style.display = 'none';
-            urlInputGroup.style.display = 'block';
-            startBtn.disabled = false;
-            startBtn.textContent = 'START STREAM';
-        }
-
-        if (data.online) {
-            adminStatusBadge.textContent = 'ACTIVE';
-            adminStatusBadge.className = 'badge live';
-        } else {
-            adminStatusBadge.textContent = 'OFFLINE';
-            adminStatusBadge.className = 'badge';
-        }
+        handleStreamStatusUpdate(data);
     } catch (err) {
         console.error('Failed to fetch status:', err);
     }
+}
+
+// Connect to Server-Sent Events for real-time status updates in admin
+function connectAdminSSE() {
+    const eventSource = new EventSource('/api/status/events');
+
+    eventSource.onmessage = (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            handleStreamStatusUpdate(data);
+        } catch (err) {
+            console.error('Failed to parse SSE event data:', err);
+        }
+    };
+
+    eventSource.onerror = (err) => {
+        console.error('Admin SSE connection lost. Reconnecting in 5 seconds...', err);
+        eventSource.close();
+        setTimeout(connectAdminSSE, 5000);
+    };
 }
 
 function showMsg(element, msg, isError = false) {
@@ -162,7 +188,7 @@ startBtn.addEventListener('click', async () => {
         if (data.success) {
             showMsg(streamMsg, 'Stream started successfully');
             ytUrlInput.value = '';
-            updateStreamStatus();
+            checkInitialStreamStatus();
         } else {
             showMsg(streamMsg, data.message || 'Error starting stream', true);
             startBtn.disabled = false;
@@ -182,7 +208,7 @@ stopBtn.addEventListener('click', async () => {
         const data = await apiCall('/api/stop', 'POST');
         if (data.success) {
             showMsg(streamMsg, 'Stream stopped');
-            updateStreamStatus();
+            checkInitialStreamStatus();
         } else {
             showMsg(streamMsg, data.message, true);
         }
@@ -282,8 +308,6 @@ confirmDeleteBtn.addEventListener('click', async () => {
     }
 });
 
-// Delay the first status API call by 5 seconds to allow the server's asynchronous bootstrap to complete cleanly
-setTimeout(() => {
-    updateStreamStatus();
-    setInterval(updateStreamStatus, 5000);
-}, 5000);
+// Check status on load and connect Server-Sent Events channel
+checkInitialStreamStatus();
+connectAdminSSE();
