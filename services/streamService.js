@@ -31,8 +31,6 @@ class StreamService extends EventEmitter {
     constructor() {
         super();
         this.currentUrl = null;
-        this.customTitle = null;
-        this.currentTitle = 'Live Radio Stream';
         this.isOnline = false;
         this.listeners = new Set();
         this.streamSessionId = 0;
@@ -83,7 +81,6 @@ class StreamService extends EventEmitter {
                 } else if (msg.type === 'status-change') {
                     this.isOnline = msg.status.online;
                     this.currentUrl = msg.status.url;
-                    this.currentTitle = msg.status.title;
                     this.cachedStatus = msg.status;
                     this.emit('status-change');
                 }
@@ -91,7 +88,7 @@ class StreamService extends EventEmitter {
         }
     }
 
-    startStream(url, customTitle) {
+    startStream(url) {
         if (cluster.isMaster) {
             if (this.currentUrl === url && this.isOnline) {
                 return;
@@ -100,15 +97,14 @@ class StreamService extends EventEmitter {
             this.stopStream(false);
             this.streamSessionId++;
             this.currentUrl = url;
-            this.customTitle = customTitle || null;
             this.shouldRetry = true;
             this._startWatchdog();
             this._launchProcesses();
 
             // Persist the active streaming state in SQLite
             db.run(
-                `INSERT OR REPLACE INTO active_stream (id, url, custom_title, active, updated_at) VALUES (1, ?, ?, 1, datetime('now'))`,
-                [url, this.customTitle],
+                `INSERT OR REPLACE INTO active_stream (id, url, active, updated_at) VALUES (1, ?, 1, datetime('now'))`,
+                [url],
                 (err) => {
                     if (err) {
                         logger.error(`Failed to save active stream URL to database: ${err.message}`);
@@ -118,7 +114,7 @@ class StreamService extends EventEmitter {
                 }
             );
         } else {
-            process.send({ type: 'start-stream', url, customTitle });
+            process.send({ type: 'start-stream', url });
         }
     }
 
@@ -172,29 +168,7 @@ class StreamService extends EventEmitter {
 
         let directUrl;
         try {
-            // Concurrently fetch stream title and direct audio stream URL in parallel for zero latency overhead
-            const titlePromise = this.customTitle
-                ? Promise.resolve(this.customTitle)
-                : youtubedl(this.currentUrl, {
-                    getTitle: true,
-                    noPlaylist: true,
-                    ignoreConfig: true,
-                    jsRuntimes: 'node',
-                    cookies: fs.existsSync(cookiesPath) ? cookiesPath : undefined
-                }, { signal: controller.signal });
-
-            const urlPromise = youtubedl(this.currentUrl, ytDlpOptions, { signal: controller.signal });
-
-            const [resolvedTitle, resolvedUrl] = await Promise.all([
-                titlePromise.catch((err) => {
-                    logger.warn(`yt-dlp title fetch error: ${err.message}`);
-                    return 'Live Radio Stream';
-                }),
-                urlPromise
-            ]);
-
-            this.currentTitle = resolvedTitle ? resolvedTitle.trim() : 'Live Radio Stream';
-            directUrl = resolvedUrl;
+            directUrl = await youtubedl(this.currentUrl, ytDlpOptions, { signal: controller.signal });
             this.activeExtractionController = null; // Reset once complete
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
@@ -393,7 +367,6 @@ class StreamService extends EventEmitter {
             return {
                 online: this.isOnline,
                 url: this.currentUrl,
-                title: this.currentTitle || 'Live Radio Stream',
                 listenerCount: this.listeners.size
             };
         } else {

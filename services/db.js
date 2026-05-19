@@ -139,17 +139,11 @@ function initDb() {
         db.run(`CREATE TABLE IF NOT EXISTS active_stream (
             id INTEGER PRIMARY KEY DEFAULT 1,
             url TEXT NOT NULL,
-            custom_title TEXT,
             active INTEGER DEFAULT 1,
             updated_at TEXT NOT NULL
         )`, (err) => {
             if (err) {
                 logger.error(`Error creating active_stream table: ${err.message}`);
-            } else {
-                // Migration path: safely add custom_title column to existing databases
-                db.run(`ALTER TABLE active_stream ADD COLUMN custom_title TEXT`, [], (alterErr) => {
-                    // Suppress "duplicate column name" SQLite errors silently
-                });
             }
         });
     });

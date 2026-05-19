@@ -7,7 +7,6 @@ const visualizer = document.querySelector('.visualizer');
 const statusBadge = document.getElementById('statusBadge');
 const listenersCount = document.getElementById('listeners');
 const reconnectStatus = document.getElementById('reconnectStatus');
-const trackTitle = document.getElementById('trackTitle');
 
 let isPlaying = false;
 let isIntentionallyStopped = true;
@@ -21,10 +20,6 @@ function handleStatusUpdate(data) {
     if (data.online) {
         statusBadge.textContent = 'LIVE';
         statusBadge.className = 'badge live';
-        if (trackTitle) {
-            trackTitle.textContent = 'Live Radio Stream';
-            trackTitle.style.color = 'var(--text-main)';
-        }
         // Auto reconnect if we were playing but audio stopped
         if (!isIntentionallyStopped && !isPlaying && audioPlayer.paused) {
             startPlayback();
@@ -32,10 +27,6 @@ function handleStatusUpdate(data) {
     } else {
         statusBadge.textContent = 'OFFLINE';
         statusBadge.className = 'badge';
-        if (trackTitle) {
-            trackTitle.textContent = 'Radio Stream Offline';
-            trackTitle.style.color = 'var(--text-muted)';
-        }
         if (isPlaying) {
             stopPlaybackUI();
         }

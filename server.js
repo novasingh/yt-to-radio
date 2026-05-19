@@ -43,8 +43,8 @@ if (cluster.isMaster) {
         }
 
         if (row && row.active === 1 && row.url) {
-            logger.info(`[STARTUP] Auto-resuming saved active stream from database: ${row.url} (${row.custom_title || 'Dynamic Title'})`);
-            streamService.startStream(row.url, row.custom_title);
+            logger.info(`[STARTUP] Auto-resuming saved active stream from database: ${row.url}`);
+            streamService.startStream(row.url);
         } else {
             const defaultUrl = 'https://www.youtube.com/watch?v=8gBkM8-bRz8';
             logger.info(`[STARTUP] No saved active stream found. Auto-starting default live stream: ${defaultUrl}`);
@@ -63,7 +63,6 @@ if (cluster.isMaster) {
         const status = {
             online: streamService.isOnline,
             url: streamService.currentUrl,
-            title: streamService.currentTitle || 'Live Radio Stream',
             listenerCount: totalListeners
         };
 
@@ -87,7 +86,7 @@ if (cluster.isMaster) {
         
         worker.on('message', (msg) => {
             if (msg.type === 'start-stream') {
-                streamService.startStream(msg.url, msg.customTitle);
+                streamService.startStream(msg.url);
             } else if (msg.type === 'stop-stream') {
                 streamService.stopStream(true);
             } else if (msg.type === 'listener-update') {
