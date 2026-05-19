@@ -1,5 +1,5 @@
-# Use Node 20 Debian-slim image for max compatibility with native binaries and custom runtimes
-FROM node:20-slim
+# Use Node 22 Debian-slim image for max compatibility with native binaries and custom runtimes
+FROM node:22-slim
 
 # Install system dependencies:
 # 1. python3: Strictly required by yt-dlp to run YouTube extraction scripts
@@ -40,6 +40,8 @@ ENV NODE_ENV=development
 ENV PORT=80
 ENV DATABASE_PATH=/app/data/database.sqlite
 ENV COOKIES_PATH=/app/data/cookies.txt
+ENV WEB_MIN_WORKERS=1
+ENV WEB_MAX_WORKERS=4
 
 # Start the Node.js application
 CMD ["node", "server.js"]
