@@ -16,6 +16,8 @@ services:
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - PORT=80
+      - WEB_MIN_WORKERS=${WEB_MIN_WORKERS:-2}
+      - WEB_MAX_WORKERS=${WEB_MAX_WORKERS:-4}
       # Pass custom admin logins and JWT secret from local .env (or fallback to defaults)
       - SUPER_ADMIN_USER=${SUPER_ADMIN_USER:-admin}
       - SUPER_ADMIN_PASS=${SUPER_ADMIN_PASS:-admin123}

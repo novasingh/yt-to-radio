@@ -40,6 +40,8 @@ ENV NODE_ENV=development
 ENV PORT=80
 ENV DATABASE_PATH=/app/data/database.sqlite
 ENV COOKIES_PATH=/app/data/cookies.txt
+ENV WEB_MIN_WORKERS=2
+ENV WEB_MAX_WORKERS=4
 
 # Start the Node.js application
 CMD ["node", "server.js"]

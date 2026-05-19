@@ -23,8 +23,8 @@ require('dotenv').config();
 const logger = require('./utils/logger');
 
 // Concurrency auto-scaling constants
-const MIN_WORKERS = 2; // Always keep 2 workers for high availability and failover
-const MAX_WORKERS = Math.max(os.cpus().length || 4, 4); // Scale up to CPU core count (minimum 4)
+const MIN_WORKERS = parseInt(process.env.WEB_MIN_WORKERS || '2', 10); // Always keep minimum workers for high availability and failover
+const MAX_WORKERS = parseInt(process.env.WEB_MAX_WORKERS || '', 10) || Math.max(os.cpus().length || 4, 4); // Scale up to configured limit or CPU core count
 const SCALE_UP_THRESHOLD = 500; // Spawn a new worker if average listeners per worker exceed 500
 const SCALE_DOWN_THRESHOLD = 200; // Drains a worker if average listeners per worker drop below 200
 
