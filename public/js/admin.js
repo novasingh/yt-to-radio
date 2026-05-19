@@ -9,6 +9,7 @@ const logoutBtn = document.getElementById('logoutBtn');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const ytUrlInput = document.getElementById('ytUrl');
+const streamTitleInput = document.getElementById('streamTitle');
 const urlInputGroup = document.getElementById('urlInputGroup');
 const adminStatusBadge = document.getElementById('adminStatusBadge');
 const adminListeners = document.getElementById('adminListeners');
@@ -179,6 +180,7 @@ function showMsg(element, msg, isError = false) {
 
 startBtn.addEventListener('click', async () => {
     const url = ytUrlInput.value;
+    const title = streamTitleInput ? streamTitleInput.value : '';
     if (!url) {
         showMsg(streamMsg, 'Please enter a URL', true);
         return;
@@ -188,10 +190,11 @@ startBtn.addEventListener('click', async () => {
     startBtn.textContent = 'STARTING...';
     
     try {
-        const data = await apiCall('/api/start', 'POST', { url });
+        const data = await apiCall('/api/start', 'POST', { url, title });
         if (data.success) {
             showMsg(streamMsg, 'Stream started successfully');
             ytUrlInput.value = '';
+            if (streamTitleInput) streamTitleInput.value = '';
             checkInitialStreamStatus();
         } else {
             showMsg(streamMsg, data.message || 'Error starting stream', true);

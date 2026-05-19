@@ -11,12 +11,12 @@ router.get('/status', (req, res) => {
 
 // Start stream (admin only)
 router.post('/start', authMiddleware, (req, res) => {
-    const { url } = req.body;
+    const { url, title } = req.body;
     if (!url) {
         return res.status(400).json({ success: false, message: 'URL is required' });
     }
     
-    streamService.startStream(url);
+    streamService.startStream(url, title);
     res.json({ success: true, message: 'Stream started' });
 });
 

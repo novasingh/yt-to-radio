@@ -31,6 +31,7 @@ class StreamService extends EventEmitter {
     constructor() {
         super();
         this.currentUrl = null;
+        this.customTitle = null;
         this.currentTitle = 'Live Radio Stream';
         this.isOnline = false;
         this.listeners = new Set();
@@ -90,7 +91,7 @@ class StreamService extends EventEmitter {
         }
     }
 
-    startStream(url) {
+    startStream(url, customTitle) {
         if (cluster.isMaster) {
             if (this.currentUrl === url && this.isOnline) {
                 return;
@@ -99,14 +100,15 @@ class StreamService extends EventEmitter {
             this.stopStream(false);
             this.streamSessionId++;
             this.currentUrl = url;
+            this.customTitle = customTitle || null;
             this.shouldRetry = true;
             this._startWatchdog();
             this._launchProcesses();
 
             // Persist the active streaming state in SQLite
             db.run(
-                `INSERT OR REPLACE INTO active_stream (id, url, active, updated_at) VALUES (1, ?, 1, datetime('now'))`,
-                [url],
+                `INSERT OR REPLACE INTO active_stream (id, url, custom_title, active, updated_at) VALUES (1, ?, ?, 1, datetime('now'))`,
+                [url, this.customTitle],
                 (err) => {
                     if (err) {
                         logger.error(`Failed to save active stream URL to database: ${err.message}`);
@@ -116,7 +118,7 @@ class StreamService extends EventEmitter {
                 }
             );
         } else {
-            process.send({ type: 'start-stream', url });
+            process.send({ type: 'start-stream', url, customTitle });
         }
     }
 
@@ -171,13 +173,15 @@ class StreamService extends EventEmitter {
         let directUrl;
         try {
             // Concurrently fetch stream title and direct audio stream URL in parallel for zero latency overhead
-            const titlePromise = youtubedl(this.currentUrl, {
-                getTitle: true,
-                noPlaylist: true,
-                ignoreConfig: true,
-                jsRuntimes: 'node',
-                cookies: fs.existsSync(cookiesPath) ? cookiesPath : undefined
-            }, { signal: controller.signal });
+            const titlePromise = this.customTitle
+                ? Promise.resolve(this.customTitle)
+                : youtubedl(this.currentUrl, {
+                    getTitle: true,
+                    noPlaylist: true,
+                    ignoreConfig: true,
+                    jsRuntimes: 'node',
+                    cookies: fs.existsSync(cookiesPath) ? cookiesPath : undefined
+                }, { signal: controller.signal });
 
             const urlPromise = youtubedl(this.currentUrl, ytDlpOptions, { signal: controller.signal });
 
