@@ -212,7 +212,8 @@ class StreamService extends EventEmitter {
                 '--no-playlist',
                 '--geo-bypass',
                 '--socket-timeout', '15',
-                '--ignore-config'
+                '--ignore-config',
+                '--js-runtimes', 'node'
             ];
             if (cookiesPath) {
                 args.push('--cookies', cookiesPath);
