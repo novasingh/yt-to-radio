@@ -37,27 +37,35 @@ function getAllUsers() {
 
 function changePassword(userId, newPassword) {
     return new Promise((resolve, reject) => {
-        const salt = bcrypt.genSaltSync(10);
-        const hash = bcrypt.hashSync(newPassword, salt);
-        db.run(`UPDATE users SET password = ? WHERE id = ?`, [hash, userId], function(err) {
+        bcrypt.genSalt(10, (err, salt) => {
             if (err) return reject(err);
-            resolve({ success: true });
+            bcrypt.hash(newPassword, salt, (err, hash) => {
+                if (err) return reject(err);
+                db.run(`UPDATE users SET password = ? WHERE id = ?`, [hash, userId], function(err) {
+                    if (err) return reject(err);
+                    resolve({ success: true });
+                });
+            });
         });
     });
 }
 
 function createUser(username, password) {
     return new Promise((resolve, reject) => {
-        const salt = bcrypt.genSaltSync(10);
-        const hash = bcrypt.hashSync(password, salt);
-        db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, 'user')`, [username, hash], function(err) {
-            if (err) {
-                if (err.message.includes('UNIQUE constraint failed')) {
-                    return resolve({ success: false, message: 'Username already exists' });
-                }
-                return reject(err);
-            }
-            resolve({ success: true, id: this.lastID });
+        bcrypt.genSalt(10, (err, salt) => {
+            if (err) return reject(err);
+            bcrypt.hash(password, salt, (err, hash) => {
+                if (err) return reject(err);
+                db.run(`INSERT INTO users (username, password, role) VALUES (?, ?, 'user')`, [username, hash], function(err) {
+                    if (err) {
+                        if (err.message.includes('UNIQUE constraint failed')) {
+                            return resolve({ success: false, message: 'Username already exists' });
+                        }
+                        return reject(err);
+                    }
+                    resolve({ success: true, id: this.lastID });
+                });
+            });
         });
     });
 }

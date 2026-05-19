@@ -4,6 +4,7 @@ const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const youtubedl = require('youtube-dl-exec');
 const fs = require('fs');
 const path = require('path');
+const cluster = require('cluster');
 const logger = require('../utils/logger');
 
 // Tell fluent-ffmpeg to use the locally installed static binary, unless a system ffmpeg is available
@@ -13,14 +14,12 @@ try {
     try {
         execSync('ffmpeg -version', { stdio: 'ignore' });
         hasSystemFfmpeg = true;
-    } catch (e) {
-        // system ffmpeg not available
-    }
+    } catch (e) { }
 
     if (hasSystemFfmpeg) {
-        logger.info('System-wide FFmpeg detected in PATH. Using system FFmpeg.');
+        if (cluster.isMaster) logger.info('System-wide FFmpeg detected in PATH. Using system FFmpeg.');
     } else {
-        logger.info(`No system-wide FFmpeg detected. Falling back to local static binary: ${ffmpegInstaller.path}`);
+        if (cluster.isMaster) logger.info(`No system-wide FFmpeg detected. Falling back to local static binary: ${ffmpegInstaller.path}`);
         ffmpeg.setFfmpegPath(ffmpegInstaller.path);
     }
 } catch (ffmpegErr) {
@@ -32,33 +31,81 @@ class StreamService extends EventEmitter {
         super();
         this.currentUrl = null;
         this.isOnline = false;
-        this.ffmpegCommand = null;
-        this.ffmpegStream = null;
         this.listeners = new Set();
-        this.retryTimeout = null;
-        this.watchdogInterval = null;
-        this.lastChunkTime = Date.now();
-        this.shouldRetry = true;
+        this.streamSessionId = 0;
         this.burstBuffer = [];
         this.currentBurstSize = 0;
-        this.maxBurstSize = 64 * 1024; // 64KB memory cache for instant playback
-        this.streamSessionId = 0;
+
+        if (cluster.isMaster) {
+            this.ffmpegCommand = null;
+            this.ffmpegStream = null;
+            this.retryTimeout = null;
+            this.watchdogInterval = null;
+            this.lastChunkTime = Date.now();
+            this.shouldRetry = true;
+            this.maxBurstSize = 64 * 1024; // 64KB memory cache for instant playback
+            this.activeExtractionController = null; // Track active extraction AbortController
+        } else {
+            this.cachedStatus = { online: false, url: null, listenerCount: 0 };
+            
+            // Worker process handles incoming master IPC chunks and status changes
+            process.on('message', (msg) => {
+                if (msg.type === 'audio-chunk') {
+                    const chunk = Buffer.isBuffer(msg.data) ? msg.data : Buffer.from(msg.data);
+                    
+                    // Manage worker-side burst buffer for fast playbacks with highly efficient O(1) tracking
+                    this.burstBuffer.push(chunk);
+                    this.currentBurstSize += chunk.length;
+                    while (this.currentBurstSize > 64 * 1024) {
+                        const removed = this.burstBuffer.shift();
+                        this.currentBurstSize -= removed.length;
+                    }
+
+                    for (const res of this.listeners) {
+                        try {
+                            const canWrite = res.write(chunk);
+                            if (!canWrite) {
+                                res.backpressureCount = (res.backpressureCount || 0) + 1;
+                                if (res.backpressureCount > 12) {
+                                    logger.warn('Disconnecting slow listener due to persistent backpressure saturation.');
+                                    res.end();
+                                }
+                            } else {
+                                res.backpressureCount = 0;
+                            }
+                        } catch (e) {
+                            this.removeListener(res);
+                        }
+                    }
+                } else if (msg.type === 'status-change') {
+                    this.isOnline = msg.status.online;
+                    this.currentUrl = msg.status.url;
+                    this.cachedStatus = msg.status;
+                    this.emit('status-change');
+                }
+            });
+        }
     }
 
     startStream(url) {
-        if (this.currentUrl === url && this.isOnline) {
-            return;
-        }
+        if (cluster.isMaster) {
+            if (this.currentUrl === url && this.isOnline) {
+                return;
+            }
 
-        this.stopStream(false);
-        this.streamSessionId++;
-        this.currentUrl = url;
-        this.shouldRetry = true;
-        this._startWatchdog();
-        this._launchProcesses();
+            this.stopStream(false);
+            this.streamSessionId++;
+            this.currentUrl = url;
+            this.shouldRetry = true;
+            this._startWatchdog();
+            this._launchProcesses();
+        } else {
+            process.send({ type: 'start-stream', url });
+        }
     }
 
     _startWatchdog() {
+        if (!cluster.isMaster) return;
         clearInterval(this.watchdogInterval);
         this.watchdogInterval = setInterval(() => {
             if (this.ffmpegCommand) {
@@ -72,24 +119,33 @@ class StreamService extends EventEmitter {
     }
 
     async _launchProcesses() {
-        if (!this.currentUrl) return;
+        if (!cluster.isMaster || !this.currentUrl) return;
 
         const sessionId = this.streamSessionId;
-        this.lastChunkTime = Date.now(); // Reset timer on launching processes
+        this.lastChunkTime = Date.now();
         logger.info(`Starting stream extraction for URL: ${this.currentUrl} (session: ${sessionId})`);
 
-        // Define standard yt-dlp extraction options
+        // Abort any active extraction first to clean up orphaned yt-dlp tasks
+        if (this.activeExtractionController) {
+            try {
+                this.activeExtractionController.abort();
+            } catch (e) {}
+            this.activeExtractionController = null;
+        }
+
+        const controller = new AbortController();
+        this.activeExtractionController = controller;
+
         const ytDlpOptions = {
             f: 'bestaudio/best',
             getUrl: true,
             noPlaylist: true,
             geoBypass: true,
             socketTimeout: 15,
-            ignoreConfig: true, // IGNORE any broken/stray config files on the VPS that leak cookie contents!
-            jsRuntimes: 'node'  // Natively solve YouTube signature ciphers via Node.js unconditionally
+            ignoreConfig: true,
+            jsRuntimes: 'node'
         };
 
-        // Detect and apply cookies.txt file if uploaded to bypass YouTube bot verification on VPS
         const cookiesPath = process.env.COOKIES_PATH || path.join(__dirname, '../cookies.txt');
         if (fs.existsSync(cookiesPath)) {
             ytDlpOptions.cookies = cookiesPath;
@@ -98,9 +154,8 @@ class StreamService extends EventEmitter {
 
         let directUrl;
         try {
-            // Get the direct media URL instead of piping stdout.
-            // Using stability flags: --no-playlist, --geo-bypass, and timeout
-            directUrl = await youtubedl(this.currentUrl, ytDlpOptions);
+            directUrl = await youtubedl(this.currentUrl, ytDlpOptions, { signal: controller.signal });
+            this.activeExtractionController = null; // Reset once complete
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
             logger.warn(`yt-dlp error fetching URL: ${err.message}`);
@@ -108,18 +163,12 @@ class StreamService extends EventEmitter {
             return;
         }
 
-        // In case stopStream or startStream was called while we were awaiting the URL
         if (sessionId !== this.streamSessionId || !this.shouldRetry) {
             logger.info('Aborting process launch: Stream session changed.');
             return;
         }
 
-        logger.info('Successfully extracted direct stream URL.');
-
-        // Create fluent-ffmpeg command reading from the direct URL
         this.ffmpegCommand = ffmpeg(directUrl)
-            // -re tells ffmpeg to read input at native frame rate. 
-            // This is CRITICAL so non-live videos don't finish transcoding in 2 seconds and stop the stream.
             .inputOptions('-re')
             .audioCodec('libmp3lame')
             .audioBitrate('16k')
@@ -128,13 +177,12 @@ class StreamService extends EventEmitter {
                 logger.info(`Spawned fluent-ffmpeg`);
             })
             .on('stderr', (stderrLine) => {
-                // Log critical ffmpeg warnings/errors to assist debugging
                 if (stderrLine.includes('Error') || stderrLine.includes('403') || stderrLine.includes('Server returned') || stderrLine.includes('Invalid')) {
                     logger.warn(`ffmpeg stderr: ${stderrLine.trim()}`);
                 }
             })
             .on('error', (err) => {
-                if (err.message.includes('SIGKILL') || err.message.includes('ffmpeg was killed')) return; // Ignore intentional kills
+                if (err.message.includes('SIGKILL') || err.message.includes('ffmpeg was killed')) return;
                 logger.warn(`fluent-ffmpeg error: ${err.message}`);
                 this._handleProcessClose();
             })
@@ -143,13 +191,11 @@ class StreamService extends EventEmitter {
                 this._handleProcessClose();
             });
 
-        // Get the output stream to pipe to listeners
         this.ffmpegStream = this.ffmpegCommand.pipe();
 
         this.ffmpegStream.on('data', (chunk) => {
             this.lastChunkTime = Date.now();
 
-            // Manage burst buffer
             this.burstBuffer.push(chunk);
             this.currentBurstSize += chunk.length;
             while (this.currentBurstSize > this.maxBurstSize) {
@@ -162,9 +208,22 @@ class StreamService extends EventEmitter {
                 logger.info('Stream is now online and broadcasting via Node modules.');
                 this.emit('status-change');
             }
+
+            // Emit raw chunk so the master process broadcasts it to cluster workers
+            this.emit('audio-chunk', chunk);
+
             for (const res of this.listeners) {
                 try {
-                    res.write(chunk);
+                    const canWrite = res.write(chunk);
+                    if (!canWrite) {
+                        res.backpressureCount = (res.backpressureCount || 0) + 1;
+                        if (res.backpressureCount > 12) {
+                            logger.warn('Disconnecting slow listener due to persistent backpressure saturation.');
+                            res.end();
+                        }
+                    } else {
+                        res.backpressureCount = 0;
+                    }
                 } catch (e) {
                     this.removeListener(res);
                 }
@@ -173,7 +232,7 @@ class StreamService extends EventEmitter {
     }
 
     _handleProcessClose() {
-        if (!this.shouldRetry) return; // Already stopped or handling manual stop
+        if (!cluster.isMaster || !this.shouldRetry) return;
 
         this.isOnline = false;
         this.emit('status-change');
@@ -187,6 +246,13 @@ class StreamService extends EventEmitter {
     }
 
     _cleanupProcesses() {
+        if (!cluster.isMaster) return;
+        if (this.activeExtractionController) {
+            try {
+                this.activeExtractionController.abort();
+            } catch (e) {}
+            this.activeExtractionController = null;
+        }
         if (this.ffmpegCommand) {
             try {
                 this.ffmpegCommand.kill('SIGKILL');
@@ -204,33 +270,47 @@ class StreamService extends EventEmitter {
     }
 
     stopStream(clearUrl = true) {
-        logger.info('Stopping stream manually.');
-        this.streamSessionId++;
-        this.shouldRetry = false;
-        clearTimeout(this.retryTimeout);
-        clearInterval(this.watchdogInterval);
-        if (clearUrl) {
-            this.currentUrl = null;
-        }
-        this._cleanupProcesses();
-        this.isOnline = false;
-        this.emit('status-change');
+        if (cluster.isMaster) {
+            logger.info('Stopping stream manually.');
+            this.streamSessionId++;
+            this.shouldRetry = false;
+            clearTimeout(this.retryTimeout);
+            clearInterval(this.watchdogInterval);
+            if (clearUrl) {
+                this.currentUrl = null;
+            }
+            this._cleanupProcesses();
+            this.isOnline = false;
+            this.emit('status-change');
 
-        // End all active listener responses
-        for (const res of this.listeners) {
-            res.end();
+            for (const res of this.listeners) {
+                res.end();
+            }
+            this.listeners.clear();
+        } else {
+            process.send({ type: 'stop-stream' });
         }
-        this.listeners.clear();
     }
 
     addListener(res) {
         this.listeners.add(res);
-        logger.info(`Listener added. Total listeners: ${this.listeners.size}`);
-        this.emit('status-change');
+        logger.info(`Listener added. Total local listeners: ${this.listeners.size}`);
+        
+        if (cluster.isWorker) {
+            process.send({ type: 'listener-update', count: this.listeners.size });
+        } else {
+            this.emit('status-change');
+        }
 
-        // Burst on connect: send the last 64KB immediately so browser buffers instantly
-        if (this.burstBuffer.length > 0) {
-            const burstData = Buffer.concat(this.burstBuffer);
+        if (res.socket) {
+            res.socket.setNoDelay(true);
+            res.socket.setKeepAlive(true, 15000);
+        }
+        res.backpressureCount = 0;
+
+        const activeBuffer = cluster.isMaster ? this.burstBuffer : (this.burstBuffer || []);
+        if (activeBuffer.length > 0) {
+            const burstData = Buffer.concat(activeBuffer);
             try {
                 res.write(burstData);
             } catch (e) {
@@ -238,7 +318,6 @@ class StreamService extends EventEmitter {
             }
         }
 
-        // Ensure to remove listener if they disconnect
         res.on('close', () => {
             this.removeListener(res);
         });
@@ -247,17 +326,25 @@ class StreamService extends EventEmitter {
     removeListener(res) {
         const deleted = this.listeners.delete(res);
         if (deleted) {
-            logger.info(`Listener removed. Total listeners: ${this.listeners.size}`);
-            this.emit('status-change');
+            logger.info(`Listener removed. Total local listeners: ${this.listeners.size}`);
+            if (cluster.isWorker) {
+                process.send({ type: 'listener-update', count: this.listeners.size });
+            } else {
+                this.emit('status-change');
+            }
         }
     }
 
     getStatus() {
-        return {
-            online: this.isOnline,
-            url: this.currentUrl,
-            listenerCount: this.listeners.size
-        };
+        if (cluster.isMaster) {
+            return {
+                online: this.isOnline,
+                url: this.currentUrl,
+                listenerCount: this.listeners.size
+            };
+        } else {
+            return this.cachedStatus;
+        }
     }
 }
 
