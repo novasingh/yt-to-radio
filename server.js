@@ -63,6 +63,7 @@ if (cluster.isMaster) {
         const status = {
             online: streamService.isOnline,
             url: streamService.currentUrl,
+            title: streamService.currentTitle || 'Live Radio Stream',
             listenerCount: totalListeners
         };
 

@@ -31,6 +31,7 @@ class StreamService extends EventEmitter {
     constructor() {
         super();
         this.currentUrl = null;
+        this.currentTitle = 'Live Radio Stream';
         this.isOnline = false;
         this.listeners = new Set();
         this.streamSessionId = 0;
@@ -81,6 +82,7 @@ class StreamService extends EventEmitter {
                 } else if (msg.type === 'status-change') {
                     this.isOnline = msg.status.online;
                     this.currentUrl = msg.status.url;
+                    this.currentTitle = msg.status.title;
                     this.cachedStatus = msg.status;
                     this.emit('status-change');
                 }
@@ -168,7 +170,27 @@ class StreamService extends EventEmitter {
 
         let directUrl;
         try {
-            directUrl = await youtubedl(this.currentUrl, ytDlpOptions, { signal: controller.signal });
+            // Concurrently fetch stream title and direct audio stream URL in parallel for zero latency overhead
+            const titlePromise = youtubedl(this.currentUrl, {
+                getTitle: true,
+                noPlaylist: true,
+                ignoreConfig: true,
+                jsRuntimes: 'node',
+                cookies: fs.existsSync(cookiesPath) ? cookiesPath : undefined
+            }, { signal: controller.signal });
+
+            const urlPromise = youtubedl(this.currentUrl, ytDlpOptions, { signal: controller.signal });
+
+            const [resolvedTitle, resolvedUrl] = await Promise.all([
+                titlePromise.catch((err) => {
+                    logger.warn(`yt-dlp title fetch error: ${err.message}`);
+                    return 'Live Radio Stream';
+                }),
+                urlPromise
+            ]);
+
+            this.currentTitle = resolvedTitle ? resolvedTitle.trim() : 'Live Radio Stream';
+            directUrl = resolvedUrl;
             this.activeExtractionController = null; // Reset once complete
         } catch (err) {
             if (sessionId !== this.streamSessionId) return;
@@ -367,6 +389,7 @@ class StreamService extends EventEmitter {
             return {
                 online: this.isOnline,
                 url: this.currentUrl,
+                title: this.currentTitle || 'Live Radio Stream',
                 listenerCount: this.listeners.size
             };
         } else {
