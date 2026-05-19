@@ -92,6 +92,17 @@ if (cluster.isMaster) {
             } else if (msg.type === 'listener-update') {
                 worker.localListenerCount = msg.count;
                 updateGlobalStatus();
+
+                // If this worker is currently in soft-drain, and its socket count has hit 0, terminate it!
+                if (worker.isDraining && msg.count === 0) {
+                    logger.info(`[AUTO-SCALE] Soft-draining Worker ${worker.process.pid} has reached 0 active sockets. Terminating process cleanly.`);
+                    worker.isShuttingDown = true;
+                    try {
+                        worker.send({ type: 'graceful-shutdown' });
+                    } catch (err) {
+                        logger.error(`Failed to send shutdown signal: ${err.message}`);
+                    }
+                }
             } else if (msg.type === 'diagnostics-report') {
                 logger.info(`[DIAGNOSTICS] Worker ${msg.pid} | Sockets: ${msg.listeners} | Heap RAM: ${msg.heapUsed}MB | RSS RAM: ${msg.rss}MB`);
             }
@@ -168,19 +179,34 @@ if (cluster.isMaster) {
                 logger.info(`[AUTO-SCALE] Load is high but scaling up is cooling down (${(timeSinceLastScale / 1000).toFixed(0)}s elapsed of ${SCALE_COOLDOWN_MS / 1000}s).`);
             }
         }
-        // 2. AUTO-SCALE DOWN: If avg connections per worker drop below 200, terminate one worker gracefully
+        // 2. AUTO-SCALE DOWN: If avg connections per worker drop below threshold, terminate one worker gracefully
         else if (avgListeners < SCALE_DOWN_THRESHOLD && totalWorkersCount > MIN_WORKERS) {
             if (timeSinceLastScale > SCALE_COOLDOWN_MS) {
-                const workerToKill = activeWorkers[0];
-                if (workerToKill) {
-                    logger.info(`[AUTO-SCALE] Load is low (${avgListeners.toFixed(1)} listeners/worker). Initiating graceful connection drain on Worker ${workerToKill.process.pid}...`);
-                    workerToKill.isShuttingDown = true;
+                // To avoid breaking streams, we strictly select and terminate a worker with 0 active listeners first
+                const zeroLoadWorker = activeWorkers.find(w => (w.localListenerCount || 0) === 0);
+                if (zeroLoadWorker) {
+                    logger.info(`[AUTO-SCALE] Found idle Worker ${zeroLoadWorker.process.pid} with 0 sockets. Initiating clean shutdown...`);
+                    zeroLoadWorker.isShuttingDown = true;
                     try {
-                        workerToKill.send({ type: 'graceful-shutdown' });
+                        zeroLoadWorker.send({ type: 'graceful-shutdown' });
                     } catch (err) {
                         logger.error(`Failed to send shutdown signal: ${err.message}`);
                     }
                     lastScaleTime = now;
+                } else {
+                    // If no worker has 0 listeners, we initiate a "soft-drain" on the first non-draining worker.
+                    // This stops it from accepting new connections, but keeps it alive to stream to existing sockets until they disconnect!
+                    const drainTarget = activeWorkers.find(w => !w.isDraining);
+                    if (drainTarget) {
+                        logger.info(`[AUTO-SCALE] Load is low. Initiating soft connection drain on Worker ${drainTarget.process.pid} (active sockets: ${drainTarget.localListenerCount})...`);
+                        drainTarget.isDraining = true;
+                        try {
+                            drainTarget.send({ type: 'soft-drain' });
+                        } catch (err) {
+                            logger.error(`Failed to send soft-drain signal: ${err.message}`);
+                        }
+                        lastScaleTime = now;
+                    }
                 }
             } else {
                 logger.info(`[AUTO-SCALE] Load is low but scaling down is cooling down (${(timeSinceLastScale / 1000).toFixed(0)}s elapsed of ${SCALE_COOLDOWN_MS / 1000}s).`);
@@ -262,6 +288,20 @@ if (cluster.isMaster) {
                 }
                 process.exit(0);
             }, 15000);
+        } else if (msg.type === 'soft-drain') {
+            logger.info(`[WORKER ${process.pid}] Soft-drain received. Closing HTTP server port to reject new incoming connections while preserving existing ones.`);
+
+            // Close the shared server port to stop accepting new TCP connection requests
+            server.close(() => {
+                logger.info(`[WORKER ${process.pid}] HTTP server closed. Exiting worker cleanly.`);
+                process.exit(0);
+            });
+
+            // If there are already no active stream sockets, exit immediately!
+            if (streamService && streamService.listeners.size === 0) {
+                logger.info(`[WORKER ${process.pid}] No active listeners on soft-drain. Exiting immediately.`);
+                process.exit(0);
+            }
         }
     });
 
